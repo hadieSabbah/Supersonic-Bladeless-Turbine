@@ -429,6 +429,8 @@ for k in range(len(line_data_split)):
     #U_e_list = []
     U_e_list = [ [None for _ in range(len(line_data_split[1]))] for _ in range(len(mach_labels)) ]
     
+
+    
  #%%   
 ### Splitting arrays ###
 U_np_all = np.array_split(U_np_all, len(mach_labels))    
@@ -447,6 +449,42 @@ wall_shear_all = np.array_split(wall_shear_all,len(mach_labels))
 Y_np_all = np.array_split(Y_np_all,len(mach_labels))
 X_np_all = np.array_split(X_np_all,len(mach_labels))
  
+#%%
+from scipy.integrate import cumtrapz  # For cumulative numerical integration
+
+# Creating a dictionary to store data for each Mach number
+Y_np_datum_dict = {}
+
+# Iterate through each Mach number
+for i, mach_key in enumerate(mach_labels):
+    # Initialize lists for Y_np_datum, omega_z, and omega_values
+    mach_data = []
+    omega_data = []
+    omega_values = []  # To store cumulative integrals of Omega_z
+
+    for k in range(len(Y_np_all[0])):
+        # Process Y_np_datum (subtract first value from each row)
+        y_row = Y_np_all[0][k] - Y_np_all[0][k][0]
+        mach_data.append(y_row)
+
+        # Process omega_z values (structured like Y_np_all)
+        omega_row = omega_all[0][k]  # Assuming omega_all matches the structure of Y_np_all
+        omega_data.append(omega_row)
+
+        # Compute the cumulative integral of -Omega_z with respect to y_row
+        omega_integral = cumtrapz(-omega_row, y_row, initial=0)  # Cumulative integration
+        omega_values.append(omega_integral)  # Append the cumulative integral for this row
+
+    # Store the processed data in the dictionary
+    Y_np_datum_dict[mach_key] = {
+        "Y_np_datum": mach_data,
+        "omega_z": omega_data,
+        "omega_values": omega_values  # Add the cumulative integrals
+    }
+
+# Validate by printing the structure of the dictionary
+print(f"Data for {mach_labels[0]}: {Y_np_datum_dict[mach_labels[0]]}")
+
 
 
 
@@ -570,57 +608,63 @@ for name in data.files:
 
 #%% Plotting delta_e vs X[mm] at multiple thresholds ###
 
-
+############################# NEED TO DO FOR EACH CASE INSTEAD! USING FOR ONLY ONE CASE IS NOT IDEAL. CREATE A FOR LO
 
 # Assuming `x_values_for_plot` and `results` are already defined #
 # Define omega thresholds as integers for consistency #
-mach_key = "Mach 2.5"  # Mach number for which we are plotting
 
-# Create the figure and axis
-fig, ax = plt.subplots(figsize=(10, 6))
+mach_keys = mach_labels  # Mach number for which we are plotting
+
 timesFont = {"fontname": "Times New Roman"}
-
 cmap = cm.get_cmap('viridis', len(mach_labels))  # Get 'viridis' colormap with as many colors as mach_labels
-counter = 0 
 
-# Loop through each omega threshold and add a plot for each
-for omega in omega_thresholds:
+# Loop through each Mach number and create a separate plot
+for mach_key in mach_keys:
+    # Create a new figure and axis for each Mach number
+    fig, ax = plt.subplots(figsize=(10, 6))
     
-    # Extract delta_e for the current omega threshold
-    delta_e = np.array(results[mach_key][omega]["delta_e"]).flatten()
-    counter += 1 
+    counter = 0  # Reset counter for colormap
     
-    # Defining the X value for the particular plot #
-    x_values_for_plot = np.array(X_np[:len(delta_e)]).flatten() * 1000
+    # Loop through each omega threshold and add a plot for each
+    for omega in omega_thresholds:
+        # Extract delta_e for the current omega threshold
+        delta_e = np.array(results[mach_key][omega]["delta_e"]).flatten()
+        counter += 1
+        
+        # Define the X values for the plot
+        x_values_for_plot = np.array(X_np[:len(delta_e)]).flatten() * 1000
+        
+        # Plot the current threshold
+        ax.plot(
+            x_values_for_plot,
+            delta_e,
+            label=f"$\\omega_{{z}} = {omega}$",
+            linewidth=2,
+            color=cmap(counter)
+        )
     
-    # Plot the current threshold
-    ax.plot(
-        x_values_for_plot,
-        delta_e,
-        label=f"$\\omega_{{z}} = {omega}$",
-        linewidth = 2,
-        color = cmap(counter)
-    )
+    # Plot the wavy section curve
+    ax.plot(x_sorted * 1e3, y_sorted * 1e3, color="red", label="Wavy Section")
+    
+    # Customize the plot
+    ax.set_title("$\\delta [mm]$ Vs $X[mm]$ for Different $\\omega_{z}$ Thresholds \n" + mach_key, **timesFont, fontsize=25)
+    ax.set_xlabel("$X \\: [mm]$", fontsize=18)
+    ax.set_ylabel("$\\delta [mm]$", fontsize=18)
+    ax.legend(loc="upper left", bbox_to_anchor=(1, 1), fontsize=14)
+    ax.grid(True)
+    
+    # Adjust layout
+    plt.tight_layout()
+    
+    # Save the figure for the current Mach number
+    save_path = f"D:/Downloads/3_Research/Tecplot_Mach_data/12_Tecplot Wavy Data/Graphs/Low Amplitude/Delta VS Omega_z/delta_Vs_X_combined_{mach_key}.png"
+    plt.savefig(save_path)
+    
+    #Showing Plot
+    plt.show()
+    # Close the current figure to prevent overlap
+    plt.close(fig)
 
-# Plotting Curve #
-ax.plot(x_sorted *1e3, y_sorted* 1e3, color = "red", label = "Wavy Section") 
-
-# Customize the plot
-ax.set_title("$\\delta [mm]$ Vs $X[mm]$ for Different $\\omega_{z}$ Thresholds", **timesFont, fontsize=25)
-ax.set_xlabel("$X \\: [mm]$", fontsize=18)
-ax.set_ylabel("$\\delta [mm]$", fontsize=18)
-ax.legend(loc="upper left", bbox_to_anchor=(1, 1), fontsize = 14)
-ax.grid(True)
-
-# Adjust layout
-plt.tight_layout()
-
-# Save the combined figure
-save_path = "D:/Downloads/3_Research/Tecplot_Mach_data/12_Tecplot Wavy Data/Graphs/Low Amplitude/delta_Vs_X_combined_Mach_2.5.png"
-plt.savefig(save_path)
-
-# Display the plot
-plt.show()
 
 
 
@@ -630,148 +674,71 @@ plt.show()
 import matplotlib.pyplot as plt
 import numpy as np
 
+# Assuming `x_values_for_plot`, `results`, `wall_shear_all`, `mach_labels`, `omega_thresholds`, `X_np`, `x_sorted`, and `y_sorted` are already defined
 
-
-# Assuming `x_values_for_plot`, `results`, `wall_shear_all`, and `mach_labels` are already defined
-
-# Define Mach number and thresholds
-mach_key = "Mach 2.5"  # Mach number for which we are plotting
-
-# Create the figure and axis
-fig, ax = plt.subplots(figsize=(10, 6))
 timesFont = {"fontname": "Times New Roman"}
 
-# Get wall_shear_all for the current Mach number
-wall_shear = np.array(results[mach_key]["wall_shear_all"])  # Shape: 77 x 3500
+# Loop through each Mach number
+for mach_key in mach_labels:
+    # Create a new figure and axis for each Mach number
+    fig, ax = plt.subplots(figsize=(10, 6))
+    
+    # Get wall_shear_all for the current Mach number
+    wall_shear = np.array(results[mach_key]["wall_shear_all"])  # Shape: 77 x 3500
 
-cmap = cm.get_cmap('viridis', len(omega_thresholds))  # Get 'viridis' colormap
-counter = 0
+    cmap = cm.get_cmap('viridis', len(omega_thresholds))  # Get 'viridis' colormap
+    counter = 0
 
-# Loop through each omega threshold and add a plot for each
-for omega in omega_thresholds:
-    # Extract delta_e for the current omega threshold
-    delta_e = np.array(results[mach_key][omega]["delta_e"]).flatten()
+    # Loop through each omega threshold and add a plot for each
+    for omega in omega_thresholds:
+        # Extract delta_e for the current omega threshold
+        delta_e = np.array(results[mach_key][omega]["delta_e"]).flatten()
 
-    # Apply the criterion: Set delta_e to NaN where wall_shear_all <= 0
-    delta_e[wall_shear.flatten()[:len(delta_e)] <= 0] = np.nan
+        # Apply the criterion: Set delta_e to NaN where wall_shear_all <= 0
+        delta_e[wall_shear.flatten()[:len(delta_e)] <= 0] = np.nan
 
-    counter += 1
+        counter += 1
 
-    # Define the X values for the plot
-    x_values_for_plot = np.array(X_np[:len(delta_e)]).flatten() * 1000
+        # Define the X values for the plot
+        x_values_for_plot = np.array(X_np[:len(delta_e)]).flatten() * 1000
 
-    # Plot the current threshold
-    ax.plot(
-        x_values_for_plot,
-        delta_e,
-        label=f"$\\omega_{{z}} = {omega}$",
-        linewidth=2,
-        color=cmap(counter)
-    )
+        # Plot the current threshold
+        ax.plot(
+            x_values_for_plot,
+            delta_e,
+            label=f"$\\omega_{{z}} = {omega}$",
+            linewidth=2,
+            color=cmap(counter)
+        )
 
-# Plot the curve
-ax.plot(x_sorted * 1e3, y_sorted * 1e3, color="red", label="Wavy Section")
+    # Plot the curve
+    ax.plot(x_sorted * 1e3, y_sorted * 1e3, color="red", label="Wavy Section")
 
-# Customize the plot
-ax.set_title("$\\delta [mm]$ Vs $X[mm]$ for Different $\\omega_{z}$ Thresholds", **timesFont, fontsize=25)
-ax.set_xlabel("$X \\: [mm]$", fontsize=18)
-ax.set_ylabel("$\\delta [mm]$", fontsize=18)
-ax.legend(loc="upper left", bbox_to_anchor=(1, 1), fontsize=14)
-ax.grid(True)
+    # Customize the plot
+    ax.set_title("$\\delta [mm]$ Vs $X[mm]$ for Different $\\omega_{z}$ Thresholds \n" +  mach_key, **timesFont, fontsize=25)
+    ax.set_xlabel("$X \\: [mm]$", fontsize=18)
+    ax.set_ylabel("$\\delta [mm]$", fontsize=18)
+    ax.legend(loc="upper left", bbox_to_anchor=(1, 1), fontsize=14)
+    ax.grid(True)
 
-# Adjust layout
-plt.tight_layout()
+    # Adjust layout
+    plt.tight_layout()
 
-# Save the combined figure
-save_path = "D:/Downloads/3_Research/Tecplot_Mach_data/12_Tecplot Wavy Data/Graphs/Low Amplitude/delta_Vs_X_combined_separation_Mach_2.5.png"
-plt.savefig(save_path)
+    # Save the figure for the current Mach number
+    save_path = f"D:/Downloads/3_Research/Tecplot_Mach_data/12_Tecplot Wavy Data/Graphs/Low Amplitude/Delta Vs Omega_z (Separated)/delta_Vs_X_combined_separation_{mach_key}.png"
+    plt.savefig(save_path)
 
-# Display the plot
-plt.show()
+    # Close the current figure to prevent overlap
+    plt.close(fig)
+
 
     
     
+
+
+
+
 #%% Visualizing where the point of interest is found across the curve for illustartion purposes. 
-
-######### Also plotting the Velocity profiel at each of those points ###########
-
-
-
-# Specific index for the point of interest
-# Define a list of indices for points of interest
-# Define a list of indices for points of interest
-point_indices = [30, 40, 60 ]  # Replace with desired indices
-
-# Add the specific points and perpendicular lines to the plot
-fig, ax = plt.subplots(figsize=(6, 4))
-
-# Plot the curve
-ax.plot(
-    x_sorted,
-    y_sorted,
-    color="black",
-    label="Curve",
-    linewidth=2.5
-)
-
-# Loop over each index to compute and plot perpendicular lines
-for point_index in point_indices:
-    # Extract the x and y coordinates for the current point
-    #x_point = x_sorted[point_index]
-    #y_point = y_sorted[point_index]
-
-    # Extract the x and y coordinates for the current point
-    x_point = X_np[point_index]
-    x_point_index = np.where(x_sorted == x_point)
-    y_point = y_sorted[x_point_index]
-    
-    x_point_index_float = x_point_index[0].item()
-     
-    # Compute the slope of the tangent at the current point
-    slope_tangent = dy_dx[x_point_index_float]
-    intercept_tangent = y_point - slope_tangent * x_point
-
-    # Compute the slope and intercept for the perpendicular line
-    slope_perpendicular = -1 / slope_tangent if slope_tangent != 0 else 0
-    intercept_perpendicular = y_point - slope_perpendicular * x_point
-
-    # Compute the delta_x for the perpendicular line
-    delta_x_perpendicular = line_length_mm / np.sqrt(1 + slope_perpendicular**2)
-    delta_y_perpendicular = slope_perpendicular * delta_x_perpendicular
-
-    # Ensure the perpendicular line is only above the curve
-    if slope_perpendicular >= 0:  # Line going upwards (positive slope)
-        x_perpendicular = [x_point, x_point + delta_x_perpendicular]
-        y_perpendicular = [y_point, y_point + delta_y_perpendicular]
-    else:  # Line going downwards (negative slope), adjust to stay above
-        x_perpendicular = [x_point, x_point - delta_x_perpendicular]
-        y_perpendicular = [y_point, y_point - delta_y_perpendicular]
-
-    # Plot the specific point of interest
-    ax.scatter(x_point, y_point, color="red", zorder=5, label="Point of Interest" if point_index == point_indices[0] else "")
-
-    # Plot the perpendicular line (restricted to top part only)
-    ax.plot(
-        x_perpendicular,
-        y_perpendicular,
-        "--",
-        color="green",
-        label="Perpendicular Line" if point_index == point_indices[0] else "",
-        linewidth=1.5,
-    )
-
-# Customize and finalize the plot
-ax.set_title("Points of Interest", fontsize=18)
-ax.set_xlabel("X [m]", fontsize=14)
-ax.set_ylabel("Y [m]", fontsize=14)
-ax.set_aspect("equal")
-ax.legend(loc="upper left", bbox_to_anchor=(1, 1), fontsize=12)
-ax.grid(True)
-
-# Display the plot
-plt.show()
-
-#%% TEST 222222 ##########################################
     
 # Define a list of indices for points of interest
 point_indices = [10 , 36 , 50]  # Replace with desired indices
@@ -866,7 +833,7 @@ plt.rc('xtick', labelsize = 15)
 plt.rc('ytick',labelsize = 15)
 
 # Saving the figure  #
-plt.savefig('D:/Downloads/3_Research/Tecplot_Mach_data/12_Tecplot Wavy Data/Graphs/Low Amplitude/curve_viz_points.png')
+plt.savefig('D:/Downloads/3_Research/Tecplot_Mach_data/12_Tecplot Wavy Data/Graphs/Low Amplitude/Velocity Profiles/Visualization/curve_viz_points.png')
 
 
 #%%
@@ -890,14 +857,6 @@ for idx, point_index in enumerate(point_indices):
         color = cmap(idx)
     )
     
-   # ax2.plot(
-    #    Y_np_all[4][point_index],
-     #   U_np_all[4][point_index],
-      #  label = f" Point {idx + 1}: 0.99 Method",
-       # linewidth = 2,
-        #linestyle = "--",
-        #color = cmap(idx)
-             #)
 
 
 # Customize and finalize the plot for velocity profiles
@@ -919,7 +878,7 @@ plt.rc('xtick', labelsize = 15)
 plt.rc('ytick',labelsize = 15)
 
 # Saving the figure  #
-plt.savefig('D:/Downloads/3_Research/Tecplot_Mach_data/12_Tecplot Wavy Data/Graphs/Low Amplitude/velocity_profile.png')
+plt.savefig('D:/Downloads/3_Research/Tecplot_Mach_data/12_Tecplot Wavy Data/Graphs/Low Amplitude/Velocity Profiles/U(y) Profiles/velocity_profile.png')
 
 # Display the plots
 plt.show()
@@ -929,71 +888,61 @@ plt.show()
 
 plt.show()
 
+
 #%% U_infinity Vs Y[mm] across different omega values ###
 
+# Assuming `results`, `Y_np`, `U_e_list`, `omega_thresholds`, and `mach_labels` are already defined
 
-# Assuming `results`, `Y_np`, `U_e_list`, and `omega_thresholds` are already defined
-mach_key = "Mach 2.5"  # Mach key as a string
-
-# Create the figure and axis
-fig, ax = plt.subplots(figsize=(8, 6))
 timesFont = {"fontname": "Times New Roman"}
 
-# Set up a colormap for distinct colors
-cmap = cm.get_cmap("viridis", len(omega_thresholds))
-
-# Loop through each omega threshold and plot U_e_list
-for idx, omega in enumerate(omega_thresholds):
-    # Extract U_e_list for the current threshold
-    U_e_list_values = results[mach_key][omega]["U_e_list"]
+# Loop through each Mach number
+for mach_key in mach_labels:
+    # Create a new figure and axis for each Mach number
+    fig, ax = plt.subplots(figsize=(8, 6))
     
-    # Loop through each velocity profile in U_e_list
-    for n, U_e_profile in enumerate(U_e_list_values):
-        if len(U_e_profile) > 0:  # Check if the profile is non-empty
-            # Dynamically extract the corresponding Y values for the profile
-            Y_values = np.array(Y_np[:len(U_e_profile)]) * 1000  # Convert to mm
-            
-            # Plot the current velocity profile
-            ax.plot(
-                Y_values,
-                U_e_profile,
-                label=f"$\\omega_{{z}} = {omega}$" if n == 0 else None,
-                linewidth=1.5,
-                color=cmap(idx)  # Use colormap for color
-            )
-
-# Customize the plot
-ax.set_title("$U_{\\infty} [m/s]$ Vs $Y[mm]$ for Different $\\omega_{z}$ Thresholds", **timesFont, fontsize=25)
-ax.set_xlabel("$Y \\: [mm]$", fontsize=14)
-ax.set_ylabel("$U_{\\infty} \\: [m/s]$", fontsize=14)
-
-# Adjust the legend with a larger font size
-ax.legend(loc="upper left", bbox_to_anchor=(1, 1), fontsize=10)
-
-# Add a grid
-ax.grid(True)
-
-# Adjust layout
-plt.tight_layout()
-
-# Save the combined figure
-save_path = "D:/Downloads/3_Research/Tecplot_Mach_data/12_Tecplot Wavy Data/Graphs/Low Amplitude/Ue_List_Vs_Y_multiple_thresholds.png"
-plt.savefig(save_path)
-
-# Display the plot
-plt.show()
-
-
-
-
-
-
-
-
-
-
-
-
+    # Set up a colormap for distinct colors
+    cmap = cm.get_cmap("viridis", len(omega_thresholds))
+    
+    # Loop through each omega threshold and plot U_e_list
+    for idx, omega in enumerate(omega_thresholds):
+        # Extract U_e_list for the current threshold
+        U_e_list_values = results[mach_key][omega]["U_e_list"]
+        
+        # Loop through each velocity profile in U_e_list
+        for n, U_e_profile in enumerate(U_e_list_values):
+            if len(U_e_profile) > 0:  # Check if the profile is non-empty
+                # Dynamically extract the corresponding Y values for the profile
+                Y_values = np.array(Y_np[:len(U_e_profile)]) * 1000  # Convert to mm
+                
+                # Plot the current velocity profile
+                ax.plot(
+                    Y_values,
+                    U_e_profile,
+                    label=f"$\\omega_{{z}} = {omega}$" if n == 0 else None,
+                    linewidth=1.5,
+                    color=cmap(idx)  # Use colormap for color
+                )
+    
+    # Customize the plot
+    ax.set_title("$U_{\\infty} [m/s]$ Vs $Y[mm]$ for Different $\\omega_{z}$ Thresholds \n" + mach_key, **timesFont, fontsize=25)
+    ax.set_xlabel("$Y \\: [mm]$", fontsize=14)
+    ax.set_ylabel("$U_{\\infty} \\: [m/s]$", fontsize=14)
+    
+    # Adjust the legend with a larger font size
+    ax.legend(loc="upper left", bbox_to_anchor=(1, 1), fontsize=10)
+    
+    # Add a grid
+    ax.grid(True)
+    
+    # Adjust layout
+    plt.tight_layout()
+    
+    # Save the figure for the current Mach number
+    save_path = f"D:/Downloads/3_Research/Tecplot_Mach_data/12_Tecplot Wavy Data/Graphs/Low Amplitude/U_Vs_Omega(Profile)/Ue_List_Vs_Y_multiple_thresholds_{mach_key}.png"
+    plt.savefig(save_path)
+    
+    # Close the current figure to prevent overlap
+    plt.close(fig)
 #%%
 
 ########## Plotting Wall Shear Stress Vs Y[mm] ###########
@@ -1042,7 +991,7 @@ ax.grid(True)
 plt.tight_layout()
 
 # Saving the figure  #
-plt.savefig('D:/Downloads/3_Research/Tecplot_Mach_data/12_Tecplot Wavy Data/Graphs/Low Amplitude/shear_VS_X.png')
+plt.savefig('D:/Downloads/3_Research/Tecplot_Mach_data/12_Tecplot Wavy Data/Graphs/Low Amplitude/Wall Shear Stress/shear_VS_X.png')
 
 
 #Showing Plot
@@ -1051,7 +1000,14 @@ plt.show()
 
 
 
+#%% Determing when the mean if equal to zero using numerical integration ##
 
+# finding the mean omega_z #
+mean_omega = simps(Y, omega_all)
+
+
+
+#%% #################################### NEEEEDS MORE WORK############################################################################################################################
 #%%%%%%%%%%%%%%%%% PLOTTING THE SHAPE FACTOR VS X-COORDINATE[M] %%%%%%%%%%%%%%%#
 from matplotlib import cm
 
