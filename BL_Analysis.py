@@ -132,11 +132,6 @@ for n in range(len(lowAmp_dirc_zipped)):
     
     # Load the Tecplot .dat file
     
-    #This is using the lab computer
-    #dataset = tp.data.load_tecplot('C:/Users/hhsabbah/Documents/01_Bladeless_Proj/01_CFD Simulations/01_2D Simulations/02_Variable Change Simulations/01_Mach Change Cases/01_High Amplitude Simulations/Mach 0.9/Tecplot Files/mach_09_comb.plt')
-    #dataset_2 = tp.data.load_tecplot('C:/Users/hhsabbah/Documents/01_Bladeless_Proj/01_CFD Simulations/01_2D Simulations/02_Variable Change Simulations/01_Mach Change Cases/01_High Amplitude Simulations/Mach 0.9/Tecplot Files/mach_09_surf.plt')
-    
-    
     #Use this when using your personal computer #
     dataset = tp.data.load_tecplot(lowAmp_dirc_zipped[n][0])
     dataset_2 =  tp.data.load_tecplot(lowAmp_dirc_zipped[n][1])
@@ -144,7 +139,8 @@ for n in range(len(lowAmp_dirc_zipped)):
     
     # Access the curve zone, get variables, and data #
     zone_curve = dataset.zone("curve Step 1 Incr 0")
-    
+    zone_wall = dataset.zone("curvy_walls Step 1 Incr 0")
+
     
     for var in dataset.variables():
             print(f"Variable: {var.name}")
@@ -159,7 +155,9 @@ for n in range(len(lowAmp_dirc_zipped)):
     # Pre-locating variables #
     x_np_all = []
     perp_cords_all = []
-    # X and Y coordinates 
+    
+    
+    # X and Y coordinates #
     x_values = zone_curve.values('CoordinateX')
     y_values = zone_curve.values('CoordinateY')
     
@@ -292,21 +290,106 @@ for n in range(len(lowAmp_dirc_zipped)):
 # Splitting the Line data into multiple arrays #
 line_data = np.array(line_data)        
 line_data_split = np.array_split(line_data, len(mach_labels))
-        
-        ### PRELOCATING VARIABLES FOR LOOP ###
-            # Pre-Locating Variable
 
-   # line_data = []
-    #for idx in range(0,len(perp_cords)):
-        #line_data.append(tp.data.extract.extract_line(list(perp_cords[idx]),num_points = len(perp_cords)))
-      
-    #line_data_all.append(line_data)
-     #### Extracting the data based on the perp_cords ####
-     
-     
+#%% 
 
 
-        
+# Extracting the x coordinate from the wall zone #
+x_wall = zone_wall.values('CoordinateX')
+y_wall = zone_wall.values('CoordinateY')
+
+
+# Converting to numpy wall #
+x_np_wall = x_wall.as_numpy_array()
+y_np_wall = y_wall.as_numpy_array()
+
+
+# Left side mask: x values less than -0.01
+left_x_mask = x_np_wall < -0.01
+
+# Right side mask: x values greater than 0.0635
+right_x_mask = x_np_wall > max(x_sorted)
+
+# Common y_mask: Filter for the y-values (e.g., for top wedge)
+y_mask = y_np_wall >=  0  # Adjust threshold as needed
+
+# Combine x and y masks for the left side
+left_mask = left_x_mask & y_mask
+
+# Combine x and y masks for the right side
+right_mask = right_x_mask & y_mask
+
+# Apply the masks to filter the x and y arrays
+x_left = x_np_wall[left_mask]
+y_left = y_np_wall[left_mask]
+
+x_right = x_np_wall[right_mask]
+y_right = y_np_wall[right_mask]
+
+# Plotting the left side
+plt.plot((x_left) , (y_left) , label="Left Side")
+
+# Plotting the right side
+plt.plot((x_right), (y_right), label="Right Side")
+
+# Enable grid
+plt.grid(True)
+
+# Adding labels and legend
+plt.xlabel("X")
+plt.ylabel("Y")
+plt.legend()
+
+# Show the plot
+plt.show()
+
+
+
+#%%
+# Another plot #
+plt.plot(x_np_wall,y_np_wall)
+
+#Showing the plot #
+plt.show()
+
+
+#%% SAVING THE DATA #####
+
+import numpy as np
+
+# Save numerical and string data
+np.savez_compressed(
+    "combined_data.npz",
+    mach_labels=np.array(mach_labels, dtype=object),  # Strings
+    line_data=line_data,  # Numerical
+    line_data_split=np.array(line_data_split, dtype=object),  # Numerical (list of arrays)
+    files_highAmp_str=np.array(files_highAmp_str, dtype=object),  # Strings
+    files_lowAmp_str=np.array(files_lowAmp_str, dtype=object),  # Strings
+    highAmp_dirc_zipped=np.array(highAmp_dirc_zipped, dtype=object),  # Mixed (strings, tuples)
+    lowAmp_dirc_zipped=np.array(lowAmp_dirc_zipped, dtype=object)  # Mixed (strings, tuples)
+)
+
+print("Numerical and string data saved successfully!")
+
+
+#%% LOADING THE DATA #####
+import numpy as np
+
+# Load the combined data
+data = np.load("combined_data.npz", allow_pickle=True)
+
+# Access individual variables
+mach_labels = data["mach_labels"]
+line_data = data["line_data"]
+line_data_split = data["line_data_split"]
+files_highAmp_str = data["files_highAmp_str"]
+files_lowAmp_str = data["files_lowAmp_str"]
+highAmp_dirc_zipped = data["highAmp_dirc_zipped"]
+lowAmp_dirc_zipped = data["lowAmp_dirc_zipped"]
+
+print("Numerical and string data loaded successfully!")
+
+
 #%%       
 
 from scipy.integrate import quad
@@ -553,58 +636,9 @@ for mach_index, mach_key in enumerate(mach_labels):  # Loop through each Mach nu
 
 
 
-#%%
-##### SAVING VALUES OBTAINED FROM RUN #######
-import numpy as np 
-array_types = (np.ndarray,list) #providing a list of array am willing to accept using a tuple. 
 
 
-# Gather all variables dynamically
-all_vars = {name: value for name, value in locals().items() if isinstance(value, np.ndarray)}
 
-# Save all variables in an .npz file
-np.savez('D:/Downloads/3_Research/Tecplot_Mach_data/Python Data/lowAmp_variables.npz', **all_vars)
-
-#%% Saving VALUES OBTAINED FOR MATLAB #####
-import numpy as np
-from scipy.io import savemat
-from pathlib import Path
-
-# Define some variables
-extra_variable = "This won't be saved"
-file_path = Path("D:/Downloads/3_Research/Tecplot_Mach_data/lowAmp_variables.mat")
-# Specify the variables to save
-variables_to_save = {
-    "Mach": mach_labels,
-    "omega_threshold": omega_thresholds,
-    "U_e":U_e,
-    "delta_e":delta_e,
-    "omega_z":omega_z,
-    "Y_np_all":Y_np_all,
-    "X_np_all":X_np_all,
-    "wall_shear_all":wall_shear_all,
-    "U_np_all":U_np_all,
-    "X_np":X_np,
-    "Y_np":Y_np,
-    "FilePath": str(file_path),  # Convert Path to string if needed
-}
-
-# Save selected variables in a MATLAB-compatible .mat file
-savemat("D:/Downloads/3_Research/Tecplot_Mach_data/Python Data/lowAmp_variables.mat", variables_to_save)
-
-print("Saved selected variables to MATLAB .mat file")
-
-#%% Importing Values from run 
-import numpy as np
-
-##### LOADING VARIABLES ######
-
-# Load the .npz file
-data = np.load('D:/Downloads/3_Research/Tecplot_Mach_data/Python Data/lowAmp_variables.npz', allow_pickle = True)
-
-# Dynamically create variables from the file
-for name in data.files:
-    globals()[name] = data[name]
 
 #%% Plotting delta_e vs X[mm] at multiple thresholds ###
 
@@ -727,7 +761,10 @@ for mach_key in mach_labels:
     # Save the figure for the current Mach number
     save_path = f"D:/Downloads/3_Research/Tecplot_Mach_data/12_Tecplot Wavy Data/Graphs/Low Amplitude/Delta Vs Omega_z (Separated)/delta_Vs_X_combined_separation_{mach_key}.png"
     plt.savefig(save_path)
-
+    
+    # Showing the grpah #
+    plt.show(fig)
+    
     # Close the current figure to prevent overlap
     plt.close(fig)
 
