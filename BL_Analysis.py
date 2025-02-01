@@ -1,5 +1,3 @@
-
-
 #%%
 ## EXTRACTING THE BOUDNARY LAYER CHARACTERSTICS AUTOMATICALLY USING PYTECPLOT ###
 
@@ -18,7 +16,11 @@ import re
 import sympy as sp 
 from scipy.integrate import simps
 from matplotlib import cm
+import time
 
+
+# Start Timer Command #
+start_time = time.time()
 
 
 # Directory #
@@ -132,42 +134,79 @@ for n in range(len(lowAmp_dirc_zipped)):
     
     # Load the Tecplot .dat file
     
-    #Use this when using your personal computer #
+    # Use this when using your personal computer #
     dataset = tp.data.load_tecplot(lowAmp_dirc_zipped[n][0])
     dataset_2 =  tp.data.load_tecplot(lowAmp_dirc_zipped[n][1])
-
     
     # Access the curve zone, get variables, and data #
     zone_curve = dataset.zone("curve Step 1 Incr 0")
-    zone_wall = dataset.zone("curvy_walls Step 1 Incr 0")
-
+ 
     
-    for var in dataset.variables():
-            print(f"Variable: {var.name}")
-            data = zone_curve.values(var)
-            print(data)  # This will print the variable's values
+    
+    
+    
+    ### Temporary If else statement for Mach 0.9 until the rest of the simulations are complete
+    if title_name == 'Mach 0.9':
+        # Left Side #
+        zone_left_wedge = dataset.zone("left_wedge Step 1 Incr 0")
+        zone_left_flat = dataset.zone("left_flate Step 1 Incr 0")
+        
+        # Right Side #
+        zone_right_wedge = dataset.zone("right_wedge Step 1 Incr 0")
+        zone_right_flat = dataset.zone("right_flate Step 1 Incr 0")
+ 
 
 
-
-#### Plotting and gathering values ####
+##########  DATA ALLOCATION BEINGS    ##########
 
 
     # Pre-locating variables #
     x_np_all = []
     perp_cords_all = []
+    y_np_all = []
     
-    
-    # X and Y coordinates #
-    x_values = zone_curve.values('CoordinateX')
-    y_values = zone_curve.values('CoordinateY')
-    
-    
-    # Changing the fieldtype to a numpy array # 
-    x_np = x_values.as_numpy_array()
-    y_np = y_values.as_numpy_array()
-    
-    x_np_all.append(x_np)
-    
+    #### !!!!!!! IF ELSE statement here is temporary.... once all the simulations are done, we shall implement this onto all conditions not only Mach 0.9! !!!!!!!!!!####
+    if title_name == 'Mach 0.9':
+        # X and Y Coordinates #
+        x_values_09 = np.concatenate((zone_left_flat.values('CoordinateX').as_numpy_array(), zone_curve.values('CoordinateX').as_numpy_array()))
+        y_values_09 = np.concatenate((zone_left_flat.values('CoordinateY').as_numpy_array(), zone_curve.values('CoordinateY').as_numpy_array()))
+        
+        # For debugging purposes #
+        x_values = x_values_09
+        y_values = y_values_09
+        
+        
+        # Naming variables as np for numpy #
+        x_np = x_values
+        y_np = y_values 
+        
+        # Sorting indicies and saving x and y variables #
+        sorted_indices = np.argsort(x_np)
+        x_np_all.append(x_np)
+        y_np_all.append(y_np)
+        
+    else:
+        #X and Y Coordinates # 
+        x_values = zone_curve.values('CoordinateX')
+        y_values =  zone_curve.values('CoordinateY')
+        
+        # Changing the fieldtype to a numpy array # 
+        x_np = x_values.as_numpy_array()
+        y_np = y_values.as_numpy_array()
+        
+        # Sorting indicies and saving x and y variables #
+        sorted_indices = np.argsort(x_np)
+        x_np_all.append(x_np[sorted_indices])
+        y_np_all.append(x_np[sorted_indices])
+ 
+
+
+
+
+     
+########## Where data processing Begins ############
+
+
     # Sorting the indices #
     sorted_indices = np.argsort(x_np)
     x_sorted = x_np[sorted_indices]
@@ -177,7 +216,8 @@ for n in range(len(lowAmp_dirc_zipped)):
     # Compute the gradient (dy/dx) #
     dy_dx = np.gradient(y_sorted, x_sorted)
     
-    
+    dy_dx = np.nan_to_num(dy_dx , nan = 0.0) # !!!! Substituting NaN values with zero assuming that the cause is due to no change !!!!
+   
     ### Computing Unit Vector ###
     
     # Defining Variables #
@@ -205,7 +245,10 @@ for n in range(len(lowAmp_dirc_zipped)):
     
     ### Pre-locating Variables ###
     perp_cords = []
-       
+    
+    
+
+  
     
     ###################### FINDING THE DISCRETE PERPENDICULAR LINES ######################
     for i in range(0, len(x_sorted), 10):  # Plot every 25th point for visibility
@@ -263,13 +306,12 @@ for n in range(len(lowAmp_dirc_zipped)):
         # Getting Line data #
         perp_cords.append(zip(x_perpendicular,y_perpendicular))
         
-        
-       
+
         
         # Plot perpendicular line #
         ax.plot(x_perpendicular, y_perpendicular, '--', color='green', alpha=1, label='Perpendicular' if i == 0 else "")
             
-       
+      
         # Mark the point on the curve #
         ax.scatter(x_sorted[i], y_sorted[i], color='red', zorder=5)
         
@@ -291,67 +333,11 @@ for n in range(len(lowAmp_dirc_zipped)):
 line_data = np.array(line_data)        
 line_data_split = np.array_split(line_data, len(mach_labels))
 
-#%% 
+# End Timer Command # 
+end_time = time.time()  # End the timer
+elapsed_time = end_time - start_time
 
-
-# Extracting the x coordinate from the wall zone #
-x_wall = zone_wall.values('CoordinateX')
-y_wall = zone_wall.values('CoordinateY')
-
-
-# Converting to numpy wall #
-x_np_wall = x_wall.as_numpy_array()
-y_np_wall = y_wall.as_numpy_array()
-
-
-# Left side mask: x values less than -0.01
-left_x_mask = x_np_wall < -0.01
-
-# Right side mask: x values greater than 0.0635
-right_x_mask = x_np_wall > max(x_sorted)
-
-# Common y_mask: Filter for the y-values (e.g., for top wedge)
-y_mask = y_np_wall >=  0  # Adjust threshold as needed
-
-# Combine x and y masks for the left side
-left_mask = left_x_mask & y_mask
-
-# Combine x and y masks for the right side
-right_mask = right_x_mask & y_mask
-
-# Apply the masks to filter the x and y arrays
-x_left = x_np_wall[left_mask]
-y_left = y_np_wall[left_mask]
-
-x_right = x_np_wall[right_mask]
-y_right = y_np_wall[right_mask]
-
-# Plotting the left side
-plt.plot((x_left) , (y_left) , label="Left Side")
-
-# Plotting the right side
-plt.plot((x_right), (y_right), label="Right Side")
-
-# Enable grid
-plt.grid(True)
-
-# Adding labels and legend
-plt.xlabel("X")
-plt.ylabel("Y")
-plt.legend()
-
-# Show the plot
-plt.show()
-
-
-
-#%%
-# Another plot #
-plt.plot(x_np_wall,y_np_wall)
-
-#Showing the plot #
-plt.show()
-
+print(f"Execution time: {elapsed_time:.4f} seconds")
 
 #%% SAVING THE DATA #####
 
@@ -421,7 +407,6 @@ def shape_factor_calc(y, u, U):
 desired_variables = ['CoordinateY', 'CoordinateX','X Component Velocity', 'Y Component Velocity','dx-velocity-dy','dy-velocity-dx','X Component Wall Shear']  # replace with your variable names
 selected_vars = [dataset.variable(var_name) for var_name in desired_variables]
 
-
 # Pre-locating all variables #
 X_np_all = []
 Y_np_all = []
@@ -434,7 +419,7 @@ U_np_all = []
 omega = []
 wall_shear = []
 wall_shear_all = []
-   
+
 for k in range(len(line_data_split)):
     # Assuming line_data is your list of Zone objects #
     #zone_uids = [zone.uid for zone in line_data_all[n]]
@@ -453,7 +438,7 @@ for k in range(len(line_data_split)):
     theta_add = []
     X_np = []
   
-    
+
 
     for zone in line_data_split[k]:   
                        
@@ -464,14 +449,14 @@ for k in range(len(line_data_split)):
         U_y = selected_vars[3].values(zone)
         du_dy = selected_vars[4].values(zone)
         dv_dx = selected_vars[5].values(zone)
-        wall_shear= selected_vars[6].values(zone)
-
+        #!!!! wall_shear= selected_vars[6].values(zone)  Issue with extracting wall shear stress for some reason??? !!!!
+ 
         #Converting to Numpy array #
         Y_np = Y.as_numpy_array()
         X_pre = X.as_numpy_array()
         du_dy_np = du_dy.as_numpy_array()
         dv_dx_np = dv_dx.as_numpy_array()
-        wall_shear = wall_shear.as_numpy_array()
+       #!!!! wall_shear = wall_shear.as_numpy_array() !!!!
         
         
         X_np.append(X_pre[0])
@@ -504,7 +489,7 @@ for k in range(len(line_data_split)):
     theta_all.append(theta_add)
     omega_all.append(omega)
     U_x_all.append(U_x_np)
-    U_np_all.append(U_np)
+   # U_np_all.append(U_np)
     
     delta_e = []
     omega_mean = []
@@ -515,22 +500,26 @@ for k in range(len(line_data_split)):
 
     
  #%%   
+
 ### Splitting arrays ###
 U_np_all = np.array_split(U_np_all, len(mach_labels))    
 omega_z = np.array_split(omega, len(mach_labels)) #Splitting omega_z 
 
 
-for m in range(len(wall_shear_all)):
-    wall_shear_all[m] = np.delete(wall_shear_all[m], [np.arange(1, len(wall_shear_all[m])  ) ] )
+# !!!! for m in range(len(wall_shear_all)): !!!!
+    # !!!! wall_shear_all[m] = np.delete(wall_shear_all[m], [np.arange(1, len(wall_shear_all[m])  ) ] ) !!!!!
 
 
 # Splitting Wall shear in numpy #
-wall_shear_all = np.array_split(wall_shear_all,len(mach_labels))
+# !!!! wall_shear_all = np.array_split(wall_shear_all,len(mach_labels)) !!!!
 
 
 # Splitting coordinate arrays X_np and Y_np #
 Y_np_all = np.array_split(Y_np_all,len(mach_labels))
-X_np_all = np.array_split(X_np_all,len(mach_labels))
+
+X_np_all = np.array(X_np_all, dtype=object)  # Allow lists of different sizes
+X_np_all = np.array_split(X_np_all, len(mach_labels))
+
  
 #%%
 from scipy.integrate import cumtrapz  # For cumulative numerical integration
@@ -605,7 +594,7 @@ results = {
 # Main computation loop for multiple thresholds
 for k, mach in enumerate(mach_labels):  # Iterate over Mach labels
     for omega_thresh in omega_thresholds:  # Iterate over thresholds
-        for n in range(len(line_data_split[1])):
+        for n in range(len(y_datum)):
             for z in range(len(U_np)):
                 if abs(omega_thresh - math.floor(omega_z[k][n][z])) <= tolerance:
                     delta_value = ( Y_np_all[k][n][z] - y_datum[n] * np.sign(Y_np_all[k][n][z]) ) * 1000
