@@ -579,7 +579,7 @@ for point in all_points:
    
     
 # Multiple omega thresholds
-omega_thresholds = np.linspace(2e4, 4.25e4, 5)  # Thresholds for different Mach numbers
+omega_thresholds = np.linspace(10, 4.25e4, 30)  # Thresholds for different Mach numbers
 extra_thresholds = np.array([1e3 , 5e3 , 1e4])
 omega_thresholds =  np.concatenate((extra_thresholds, omega_thresholds))
 tolerance = 1000
