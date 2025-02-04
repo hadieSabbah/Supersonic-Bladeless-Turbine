@@ -156,7 +156,20 @@ for file_comb, file_surf in lowAmp_dirc_zipped:
     
     
     # Getting Line data #
-    perp_cords.append(zip(x_perpendicular,y_perpendicular))
+    # Generate and store coordinate pairs correctly
+    for x1, x2, y1, y2 in zip(x_sorted[indices], x_sorted[indices] - multiplier * delta_x_perpendicular,
+                               y_sorted[indices], y_sorted[indices] - multiplier * delta_y_perpendicular):
+        perp_cords.append([(x1, y1), (x2, y2)])  # ✅ Correct format
+    
+    # Extract line data properly
+    num_of_points = 3500
+    for cord_pair in perp_cords:
+        if isinstance(cord_pair, list) and len(cord_pair) == 2:
+            line_data.append(tp.data.extract.extract_line(cord_pair, num_points=num_of_points))
+        else:
+            print(f"Skipping")
+
+
     
     
     # Create a plot
