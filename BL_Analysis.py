@@ -141,19 +141,14 @@ for n in range(len(lowAmp_dirc_zipped)):
     # Access the curve zone, get variables, and data #
     zone_curve = dataset.zone("curve Step 1 Incr 0")
  
+
+    # Left Side #
+    zone_left_wedge = dataset.zone("left_wedge Step 1 Incr 0")
+    zone_left_flat = dataset.zone("left_flate Step 1 Incr 0")
     
-    
-    
-    
-    ### Temporary If else statement for Mach 0.9 until the rest of the simulations are complete
-    if title_name == 'Mach 0.9':
-        # Left Side #
-        zone_left_wedge = dataset.zone("left_wedge Step 1 Incr 0")
-        zone_left_flat = dataset.zone("left_flate Step 1 Incr 0")
-        
-        # Right Side #
-        zone_right_wedge = dataset.zone("right_wedge Step 1 Incr 0")
-        zone_right_flat = dataset.zone("right_flate Step 1 Incr 0")
+    # Right Side #
+    zone_right_wedge = dataset.zone("right_wedge Step 1 Incr 0")
+    zone_right_flat = dataset.zone("right_flate Step 1 Incr 0")
  
 
 
@@ -165,44 +160,20 @@ for n in range(len(lowAmp_dirc_zipped)):
     perp_cords_all = []
     y_np_all = []
     
-    #### !!!!!!! IF ELSE statement here is temporary.... once all the simulations are done, we shall implement this onto all conditions not only Mach 0.9! !!!!!!!!!!####
-    if title_name == 'Mach 0.9':
-        # X and Y Coordinates #
-        x_values_09 = np.concatenate((zone_left_flat.values('CoordinateX').as_numpy_array(), zone_curve.values('CoordinateX').as_numpy_array()))
-        y_values_09 = np.concatenate((zone_left_flat.values('CoordinateY').as_numpy_array(), zone_curve.values('CoordinateY').as_numpy_array()))
-        
-        # For debugging purposes #
-        x_values = x_values_09
-        y_values = y_values_09
-        
-        
-        # Naming variables as np for numpy #
-        x_np = x_values
-        y_np = y_values 
-        
-        # Sorting indicies and saving x and y variables #
-        sorted_indices = np.argsort(x_np)
-        x_np_all.append(x_np)
-        y_np_all.append(y_np)
-        
-    else:
-        #X and Y Coordinates # 
-        x_values = zone_curve.values('CoordinateX')
-        y_values =  zone_curve.values('CoordinateY')
-        
-        # Changing the fieldtype to a numpy array # 
-        x_np = x_values.as_numpy_array()
-        y_np = y_values.as_numpy_array()
-        
-        # Sorting indicies and saving x and y variables #
-        sorted_indices = np.argsort(x_np)
-        x_np_all.append(x_np[sorted_indices])
-        y_np_all.append(x_np[sorted_indices])
- 
 
-
-
-
+    # X and Y Coordinates #
+    x_values = np.concatenate((zone_left_flat.values('CoordinateX').as_numpy_array(), zone_curve.values('CoordinateX').as_numpy_array()))
+    y_values = np.concatenate((zone_left_flat.values('CoordinateY').as_numpy_array(), zone_curve.values('CoordinateY').as_numpy_array()))
+    
+    # Naming variables as np for numpy #
+    x_np = x_values
+    y_np = y_values 
+    
+    # Sorting indicies and saving x and y variables #
+    sorted_indices = np.argsort(x_np)
+    x_np_all.append(x_np)
+    y_np_all.append(y_np)
+    
      
 ########## Where data processing Begins ############
 
