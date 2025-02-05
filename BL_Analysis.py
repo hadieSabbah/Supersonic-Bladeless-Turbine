@@ -113,7 +113,7 @@ for file_comb, file_surf in lowAmp_dirc_zipped:
     dx, dy = np.gradient(x_sorted), np.gradient(y_sorted)
     unit_mag = np.hypot(dx, dy)
     unit_vector_x, unit_vector_y = dx / unit_mag, dy / unit_mag
-    dy_dx = np.array(np.nan_to_num(dy / dx, nan= 0.0))
+    dy_dx = np.array(np.nan_to_num(dy / dx, nan= 0.0 , posinf = 1e6 , neginf = 1e6 ) )
 
     # Tangent and Perpendicular Lines (Vectorized)
     line_length_mm = 10 / 1000  # 1mm in meters
@@ -126,6 +126,13 @@ for file_comb, file_surf in lowAmp_dirc_zipped:
     slope_tangent = dy_dx[indices]
     intercept_tangent = y_sorted[indices] - slope_tangent * x_sorted[indices]
 	
+    max_slope = 1e4  # Large finite value for vertical slopes
+    tiny_value = 1e-10
+
+    # Replace exact zeros with a small number BEFORE division
+    slope_tangent_safe = np.where(np.abs(slope_tangent) < 1e-10, tiny_value, slope_tangent)
+    
+    
 	# Computing delta_x #
     delta_x = line_length_mm / np.sqrt(1 + slope_tangent **2) 
 	
@@ -134,8 +141,9 @@ for file_comb, file_surf in lowAmp_dirc_zipped:
     x_local_tangent = np.linspace(x_sorted[indices] - delta_x , x_sorted[indices] + delta_x, 10)
     y_tanget = slope_tangent * x_local_tangent + intercept_tangent
 	
-    # Perpendicular line: slope = -1 / tangent_slope #
-    slope_perpendicular = np.where(slope_tangent != 0, -1 / slope_tangent, 0)
+
+    # Compute perpendicular slope safely #
+    slope_perpendicular = np.where(slope_tangent_safe != 0, -1 / slope_tangent_safe, max_slope)
     intercept_perpendicular = y_sorted[indices] - slope_perpendicular * x_sorted[indices]
     
     
@@ -146,30 +154,15 @@ for file_comb, file_surf in lowAmp_dirc_zipped:
 	# Determine direction for the perpendicular line #
     multiplier = np.where(y_sorted[indices] > y_sorted[indices] - delta_y_perpendicular, -1, 1)
 
-        
+
+    
 	# Generating the two endpoints of the perpendicular line #
     x_perpendicular = [x_sorted[indices], x_sorted[indices] - multiplier * delta_x_perpendicular]
     y_perpendicular = [y_sorted[indices], y_sorted[indices] - multiplier * delta_y_perpendicular]
         
-    #x_perpendicular = x_sorted[indices] - delta_x[indices]
-    #y_perpendicular = y_sorted[indices] - (-1 / dy_dx[indices]) * delta_x[indices]
-    
-    
-    # Getting Line data #
-    # Generate and store coordinate pairs correctly
-    for x1, x2, y1, y2 in zip(x_sorted[indices], x_sorted[indices] - multiplier * delta_x_perpendicular,
-                               y_sorted[indices], y_sorted[indices] - multiplier * delta_y_perpendicular):
-        perp_cords.append([(x1, y1), (x2, y2)])  # ✅ Correct format
-    
-    # Extract line data properly
-    num_of_points = 3500
-    for cord_pair in perp_cords:
-        if isinstance(cord_pair, list) and len(cord_pair) == 2:
-            line_data.append(tp.data.extract.extract_line(cord_pair, num_points=num_of_points))
-        else:
-            print(f"Skipping")
 
-
+    # Extracting Perpendicular line coordinates # 
+    perp_cords = zip(x_perpendicular, y_perpendicular) 
     
     
     # Create a plot
@@ -339,8 +332,16 @@ print(f"Execution time: {elapsed_time:.4f} seconds")
 
 #%% Testing the wedge and curve values ###
 
-plt.plot(x_sorted,y_sorted)
+# Create a plot
+fig, ax = plt.subplots()
 
+ax.plot(x_sorted,y_sorted)
+
+# Scatter Plot for the points # 
+ax.scatter(x_sorted[indices], y_sorted[indices], color='red', zorder=5)
+
+# Plot for the perpendicualr lines #         
+ax.plot(x_perpendicular , y_perpendicular , '--' , color = 'green' , alpha = 1 ) 
 
 #%% Old looping code (NON - VECTORIZED CODE)  ###
 # Start Timer Command #
