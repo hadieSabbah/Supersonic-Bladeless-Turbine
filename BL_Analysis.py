@@ -1,9 +1,7 @@
-#%%
+
+#%% Vectorized Form #%% 
 ## EXTRACTING THE BOUDNARY LAYER CHARACTERSTICS AUTOMATICALLY USING PYTECPLOT ###
 
-
-
-
 #### Importing the required libraries ####
 import numpy as np 
 import matplotlib.pyplot as plt
@@ -19,32 +17,10 @@ import sympy as sp
 from scipy.integrate import simps
 from matplotlib import cm
 import time
-
-
-#%% ## CHAT GPT VECTORIZED TEST ##%
-
-#%% Attempt 2 OF GPT VECTORIZED CODE #%%
-
-
-
-
-#### Importing the required libraries ####
-import numpy as np 
-import matplotlib.pyplot as plt
-import pandas as pd
-import tecplot as tp
-import scipy
-import seaborn as sns 
-from pathlib import Path
-import os 
-import glob
-import re 
-import sympy as sp 
-from scipy.integrate import simps
-from matplotlib import cm
-import time
-
-
+import concurrent.futures
+import traceback
+from functools import lru_cache
+from itertools import chain 
 
 # Start Timer
 start_time = time.time()
@@ -70,6 +46,8 @@ plt.close('all')
 
 # Pre-allocate Variables
 mach_labels, line_data = [], []
+counter = 0
+
 
 for file_comb, file_surf in lowAmp_dirc_zipped:
     
@@ -119,9 +97,12 @@ for file_comb, file_surf in lowAmp_dirc_zipped:
     line_length_mm = 10 / 1000  # 1mm in meters
     delta_x = line_length_mm / np.sqrt(1 + dy_dx**2)
     
-    # Generating line data for perpendicular lines every 10th point
-    indices = np.arange(0, len(x_sorted), 10)
-	
+    # Generating line data for perpendicular lines every #th point
+    step_size = 30
+    indices = np.arange(0, len(x_sorted), step_size)
+    num_perpendicular_lines = len(np.arange(0, len(x_sorted), step_size))
+    
+    
 	# Computing the line slope and intercept #
     slope_tangent = dy_dx[indices]
     intercept_tangent = y_sorted[indices] - slope_tangent * x_sorted[indices]
@@ -161,11 +142,23 @@ for file_comb, file_surf in lowAmp_dirc_zipped:
     y_perpendicular = [y_sorted[indices], y_sorted[indices] - multiplier * delta_y_perpendicular]
         
 
-    # Extracting Perpendicular line coordinates # 
-    perp_cords = zip(x_perpendicular, y_perpendicular) 
+    # Getting the values of the starting point and end point for perp_cords
+    x1 = tuple(x_sorted[indices])
+    y1 = tuple(y_sorted[indices])
+    x2 = tuple(x_sorted[indices] - multiplier * delta_x_perpendicular)
+    y2 = tuple(y_sorted[indices] - multiplier * delta_y_perpendicular)
+
+
+    # Organizing data for pandas DataFrame (Each row has both start and end points)
+    data = [
+        ((x1[i], y1[i]), (x2[i], y2[i])) for i in range(len(x1))
+    ]
     
+    # Creating Pandas DataFrame
+    df_perp_lines = pd.DataFrame(data, columns=['start_point', 'end_point'])
+
     
-    # Create a plot
+    #### !!! Create a plot !!! ####
     fig, ax = plt.subplots()
     
     # Plot for the Curve #
@@ -174,11 +167,7 @@ for file_comb, file_surf in lowAmp_dirc_zipped:
     # Scatter Plot for the points # 
     ax.scatter(x_sorted[indices], y_sorted[indices], color='red', zorder=5)
     
-    
-    #ax.plot(np.column_stack([x_sorted[indices], x_perpendicular]).T,
-            #np.column_stack([y_sorted[indices], y_perpendicular]).T,
-            #'--', color='green', alpha=1)
-            
+
     # Plot for the perpendicualr lines #         
     ax.plot(x_perpendicular , y_perpendicular , '--' , color = 'green' , alpha = 1 ) 
 
@@ -188,160 +177,39 @@ for file_comb, file_surf in lowAmp_dirc_zipped:
     ax.set_aspect('equal')
     ax.grid(True)
     ax.legend(loc='upper left', bbox_to_anchor=(1, 1))
+    
+    # Defining the number of points captured along a single line
+    num_of_points = 3500 
+    
+    # Extract line data for each perpendicular line
+    extracted_zones = [
+        tp.data.extract.extract_line((row.start_point, row.end_point), num_points=num_of_points)
+        for row in df_perp_lines.itertuples(index=False)
+    ]
+    
+    # Convert extracted zones into a NumPy array and ensure it's flattened to 1D
+    extracted_zones = np.array(extracted_zones, dtype=object).flatten()  # Flatten ensures 1D structure
+    
+    # Store in line_data
+    line_data.append(extracted_zones)
+    
+    # Ensure correct shape
+    line_data[counter] = np.array(line_data[counter]).flatten()  # Flatten again in case of extra nesting
+    
+    counter += 1
 
-    num_of_points = 3500
-    for cord_pair in perp_cords:
-        line_data.append(tp.data.extract.extract_line(cord_pair, num_points=num_of_points))
 
 
   
 # Convert to numpy array and split
-line_data = np.array(line_data)
-line_data_split = np.array_split(line_data, len(mach_labels))
-
-# End Timer
-elapsed_time = time.time() - start_time
-print(f"Execution time: {elapsed_time:.4f} seconds")
-#### Importing the required libraries ####
-import numpy as np 
-import matplotlib.pyplot as plt
-import pandas as pd
-import tecplot as tp
-import scipy
-import seaborn as sns 
-from pathlib import Path
-import os 
-import glob
-import re 
-import sympy as sp 
-from scipy.integrate import simps
-from matplotlib import cm
-import time
-
-
-
-# Start Timer
-start_time = time.time()
-
-# Directory
-dirc = "D:/Downloads/3_Research/Tecplot_Mach_data/12_Tecplot Wavy Data"
-high_amp_dirc, low_amp_dirc = Path(dirc) / "High Amplitude", Path(dirc) / "Low Amplitude"
-
-# Getting files from each respective directory
-files_highAmp_str = [str(f).replace("\\", "/") for f in high_amp_dirc.rglob("*.plt*")]
-files_lowAmp_str = [str(f).replace("\\", "/") for f in low_amp_dirc.rglob("*.plt*")]
-
-# Separating files using slicing
-files_highAmp_comb, files_highAmp_surf = files_highAmp_str[::2], files_highAmp_str[1::2]
-files_lowAmp_comb, files_lowAmp_surf = files_lowAmp_str[::2], files_lowAmp_str[1::2]
-
-# Zipping to create pairs
-highAmp_dirc_zipped = list(zip(files_highAmp_comb, files_highAmp_surf))
-lowAmp_dirc_zipped = list(zip(files_lowAmp_comb, files_lowAmp_surf))
-
-### LOW AMP POST-PROCESSING ###
-plt.close('all')
-
-# Pre-allocate Variables
-mach_labels, line_data = [], []
-
-for file_comb, file_surf in lowAmp_dirc_zipped:
-    
-    
-    # Pre-allcoating variables #
-    perp_cords = []
-    
-    
-    # Extracting Mach Number
-    match = re.search(r'Mach \d+(\.\d+)?', file_comb)
-    if match:
-        mach_labels.append(match.group(0))
-
-    # Start a fresh Tecplot workspace
-    page = tp.add_page()
-    tp.delete_page(page)
-    f = tp.active_page().add_frame()
-
-    # Load the Tecplot .plt files
-    dataset, dataset_2 = tp.data.load_tecplot(file_comb), tp.data.load_tecplot(file_surf)
-
-    # Accessing required zones
-    zone_curve = dataset.zone("curve Step 1 Incr 0")
-    zone_left_flat = dataset.zone("left_flate Step 1 Incr 0")
-
-    # Vectorized Concatenation of X and Y Coordinates
-      
-    x_values = np.concatenate((zone_left_flat.values('CoordinateX').as_numpy_array(),
-                                       zone_curve.values('CoordinateX').as_numpy_array()))
-    y_values = np.concatenate((zone_left_flat.values('CoordinateY').as_numpy_array(),
-                               zone_curve.values('CoordinateY').as_numpy_array()))
-
-
-    # Sorting the indices #
-    sorted_indices = np.argsort(x_values)
-    x_sorted = x_values[sorted_indices]
-    y_sorted = y_values[sorted_indices]
-    
-  
-    # Compute gradient (dy/dx) and unit vectors (Vectorized)
-    dx, dy = np.gradient(x_sorted), np.gradient(y_sorted)
-    unit_mag = np.hypot(dx, dy)
-    unit_vector_x, unit_vector_y = dx / unit_mag, dy / unit_mag
-    dy_dx = np.array(np.nan_to_num(dy / dx, nan= 0.0))
-
-    # Tangent and Perpendicular Lines (Vectorized)
-    line_length_mm = 10 / 1000  # 1mm in meters
-    delta_x = line_length_mm / np.sqrt(1 + dy_dx**2)
-    
-    # Generating line data for perpendicular lines every 10th point
-    indices = np.arange(0, len(x_sorted), 10)
-    x_perpendicular = x_sorted[indices] - delta_x[indices]
-    y_perpendicular = y_sorted[indices] - (-1 / dy_dx[indices]) * delta_x[indices]
-    
-    
-    # Getting Line data #
-    perp_cords.append(zip(x_perpendicular,y_perpendicular))
-    
-    
-    # Create a plot
-    fig, ax = plt.subplots()
-    ax.plot(x_sorted, y_sorted, label='Curve')
-    ax.scatter(x_sorted[indices], y_sorted[indices], color='red', zorder=5)
-    ax.plot(np.column_stack([x_sorted[indices], x_perpendicular]).T,
-            np.column_stack([y_sorted[indices], y_perpendicular]).T,
-            '--', color='green', alpha=1)
-
-    ax.set_title("Vectorized Perpendicular Lines", fontsize=18)
-    ax.set_xlabel("X [m]")
-    ax.set_ylabel("Y [m]")
-    ax.set_aspect('equal')
-    ax.grid(True)
-    ax.legend(loc='upper left', bbox_to_anchor=(1, 1))
-    
-    num_of_points = 3500
-    line_data.append([tp.data.extract.extract_line(cord_pair, num_points = num_of_points) for cord_pair in perp_cords])
-
-  
-# Convert to numpy array and split
-line_data = np.array(line_data)
-line_data_split = np.array_split(line_data, len(mach_labels))
+line_data = np.array(line_data).flatten()
+line_data_split = np.array(np.array_split(line_data, len(mach_labels)))
 
 # End Timer
 elapsed_time = time.time() - start_time
 print(f"Execution time: {elapsed_time:.4f} seconds")
 
-#%% Testing the wedge and curve values ###
 
-# Create a plot
-fig, ax = plt.subplots()
-
-ax.plot(x_sorted,y_sorted)
-
-# Scatter Plot for the points # 
-ax.scatter(x_sorted[indices], y_sorted[indices], color='red', zorder=5)
-
-# Plot for the perpendicualr lines #         
-ax.plot(x_perpendicular , y_perpendicular , '--' , color = 'green' , alpha = 1 ) 
 
 #%% Old looping code (NON - VECTORIZED CODE)  ###
 # Start Timer Command #
@@ -621,7 +489,7 @@ for n in range(len(lowAmp_dirc_zipped)):
         ax.grid(True)
         ax.legend(loc='upper left', bbox_to_anchor=(1, 1))
         
-    num_of_points = 3500
+    num_of_points = 250
     for cord_pair in perp_cords:
         line_data.append(tp.data.extract.extract_line(cord_pair, num_points= num_of_points))  # Adjust num_points if needed  
 
@@ -804,12 +672,12 @@ U_np_all = np.array_split(U_np_all, len(mach_labels))
 omega_z = np.array_split(omega, len(mach_labels)) #Splitting omega_z 
 
 
-# !!!! for m in range(len(wall_shear_all)): !!!!
-    # !!!! wall_shear_all[m] = np.delete(wall_shear_all[m], [np.arange(1, len(wall_shear_all[m])  ) ] ) !!!!!
+for m in range(len(wall_shear_all)): 
+    wall_shear_all[m] = np.delete(wall_shear_all[m], [np.arange(1, len(wall_shear_all[m])  ) ] ) 
 
 
 # Splitting Wall shear in numpy #
-# !!!! wall_shear_all = np.array_split(wall_shear_all,len(mach_labels)) !!!!
+wall_shear_all = np.array_split(wall_shear_all,len(mach_labels)) 
 
 
 # Splitting coordinate arrays X_np and Y_np #
@@ -868,16 +736,16 @@ y_datum = []
 all_points = np.arange(0,len(X_np)) # All the points across the discretized section 
 
 for point in all_points:
-   
     # Extract the x and y coordinates for all the points 
-    x_points = X_np[point]
+    x_points = X_np_all[counter][0][point]
     x_point_indicies = np.where(x_sorted == x_points)
     y_datum.append(abs(y_sorted[x_point_indicies]))
+
     
    
     
 # Multiple omega thresholds
-omega_thresholds = np.linspace(10, 20e3, 10)  # Thresholds for different Mach numbers
+omega_thresholds = np.linspace(1.5e4, 2.0e4, 10)  # Thresholds for different Mach numbers
 extra_thresholds = np.array([1e3 , 5e3 , 1e4])
 omega_thresholds =  np.concatenate((extra_thresholds, omega_thresholds))
 tolerance = 1000
@@ -896,11 +764,14 @@ for k, mach in enumerate(mach_labels):  # Iterate over Mach labels
             for z in range(len(U_np)):
                 if abs(omega_thresh - math.floor(omega_z[k][n][z])) <= tolerance:
                     delta_value = ( Y_np_all[k][n][z] - y_datum[n] * np.sign(Y_np_all[k][n][z]) ) * 1000
+                    
+                    # Convert to a flat 1D array before storing
+                    delta_value = np.atleast_1d(delta_value).flatten().tolist()
                     U_e_value = U_np_all[k][n][z]
                     U_e_list_value = U_np_all[k][n][0:z]
 
                     # Append to the dictionary under the current threshold
-                    results[mach][omega_thresh]["delta_e"].append(delta_value)
+                    results[mach][omega_thresh]["delta_e"].extend(delta_value)  # Use extend() to avoid nested lists
                     results[mach][omega_thresh]["U_e"].append(U_e_value)
                     results[mach][omega_thresh]["U_e_list"].append(U_e_list_value)
 
@@ -939,21 +810,27 @@ mach_keys = mach_labels  # Mach number for which we are plotting
 timesFont = {"fontname": "Times New Roman"}
 cmap = cm.get_cmap('viridis', len(mach_labels))  # Get 'viridis' colormap with as many colors as mach_labels
 
+
 # Loop through each Mach number and create a separate plot
 for mach_key in mach_keys:
     # Create a new figure and axis for each Mach number
     fig, ax = plt.subplots(figsize=(10, 6))
     
-    counter = 0  # Reset counter for colormap
+    # Setting Counters #
+    counter_contour = 0  # Reset counter for colormap
+    counter_xnp = 0 
+    counter_xnp += 1
+    
     
     # Loop through each omega threshold and add a plot for each
     for omega in omega_thresholds:
         # Extract delta_e for the current omega threshold
-        delta_e = np.array(results[mach_key][omega]["delta_e"]).flatten()
-        counter += 1
+        delta_e = np.unique(np.array(results[mach_key][omega]["delta_e"]).flatten())
+        counter_contour += 1
         
         # Define the X values for the plot
-        x_values_for_plot = np.array(X_np[:len(delta_e)]).flatten() * 1000
+        x_values_for_plot = np.array(X_np_all[counter_xnp][0][:len(delta_e)]).flatten() * 1000
+        
         
         # Plot the current threshold
         ax.plot(
@@ -961,7 +838,7 @@ for mach_key in mach_keys:
             delta_e,
             label=f"$\\omega_{{z}} = {omega}$",
             linewidth=2,
-            color=cmap(counter)
+            color=cmap(counter_contour)
         )
     
     # Plot the wavy section curve
@@ -987,7 +864,7 @@ for mach_key in mach_keys:
     # Close the current figure to prevent overlap
     plt.close(fig)
 
-
+counter = 0 
 
 
 #%% delta_e vs X[mm] where, the separation tool is being implemented  ######
