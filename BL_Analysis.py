@@ -21,7 +21,8 @@ import concurrent.futures
 import traceback
 from functools import lru_cache
 from itertools import chain 
-
+import fluids 
+#%%
 # Start Timer
 start_time = time.time()
 
@@ -728,28 +729,56 @@ print(f"Data for {mach_labels[0]}: {Y_np_datum_dict[mach_labels[0]]}")
 
 #%% Allocating results using dictionary #
 
-
+from fluids.compressible import flowisentropic
 # Creating a datum to accurately capture the boundary layer thickness delta_e #
 y_datum = []
 
 # Creating a range for the indices using numpy #
 all_points = np.arange(0,len(X_np)) # All the points across the discretized section 
-
+counter = 0 
 for point in all_points:
+    
     # Extract the x and y coordinates for all the points 
-    x_points = X_np_all[counter][0][point]
+    x_points = X_np_all[0][counter][point]
     x_point_indicies = np.where(x_sorted == x_points)
     y_datum.append(abs(y_sorted[x_point_indicies]))
-
+    counter += 1
     
    
     
-# Multiple omega thresholds
+# Multiple omega thresholds #
 omega_thresholds = np.linspace(1.5e4, 2.0e4, 10)  # Thresholds for different Mach numbers
 extra_thresholds = np.array([1e3 , 5e3 , 1e4])
 omega_thresholds =  np.concatenate((extra_thresholds, omega_thresholds))
 tolerance = 1000
 
+# Non-Dimensionalizing the thresholds #
+X_L = X_np_all[0][0][-1] * 1000 # Length of the wavy section in mm
+
+# Getting the Amplitude # 
+peak_to_peak = np.max(Y_np_all) - np.min(Y_np_all)
+amplitude = (peak_to_peak / 2) * 1000 # in mm
+
+print(amplitude)
+
+# Computing amp/wave ratio #
+amp_to_wave = amplitude / X_L # Non-Dim
+print(amp_to_wave) 
+
+
+## Non-dimensionalizing the omega_threshold ## 
+mach_numbers = np.array([0.9 , 1.8 , 2.0 , 2.5 , 3.0 , 3.5])
+gamma = 1.4
+R = 287 #j / kg *k 
+T0 = 350 # Stagnation temp in kelvin (from wind tunnel)
+p0 = 5e5 # in Pascals 
+
+T , p , rho, a , q = flowisentropic(M , T0 , p0 , gamma)
+
+
+
+#a = np.sqrt( gamma * R * T)
+#%%
 
 # Initialize the dictionary to store results
 results = {
@@ -759,21 +788,23 @@ results = {
 
 # Main computation loop for multiple thresholds
 for k, mach in enumerate(mach_labels):  # Iterate over Mach labels
-    for omega_thresh in omega_thresholds:  # Iterate over thresholds
+    for amp , omega_thresh in enumerate(omega_thresholds):  # Iterate over thresholds
         for n in range(len(y_datum)):
             for z in range(len(U_np)):
                 if abs(omega_thresh - math.floor(omega_z[k][n][z])) <= tolerance:
                     delta_value = ( Y_np_all[k][n][z] - y_datum[n] * np.sign(Y_np_all[k][n][z]) ) * 1000
                     
                     # Convert to a flat 1D array before storing
-                    delta_value = np.atleast_1d(delta_value).flatten().tolist()
+                    delta_value = np.unique(np.atleast_1d(delta_value).flatten().tolist())
                     U_e_value = U_np_all[k][n][z]
                     U_e_list_value = U_np_all[k][n][0:z]
-
+                    
+                    # Omega non dim values # 
+                    omega_ratio = omega_non_dim[amp]
                     # Append to the dictionary under the current threshold
-                    results[mach][omega_thresh]["delta_e"].extend(delta_value)  # Use extend() to avoid nested lists
-                    results[mach][omega_thresh]["U_e"].append(U_e_value)
-                    results[mach][omega_thresh]["U_e_list"].append(U_e_list_value)
+                    results[mach][omega_ratio]["delta_e"].extend(delta_value)  # Use extend() to avoid nested lists
+                    results[mach][omega_ratio]["U_e"].append(U_e_value)
+                    results[mach][omega_ratio]["U_e_list"].append(U_e_list_value)
 
                     break  # Stop searching after finding the first match
 
@@ -829,7 +860,7 @@ for mach_key in mach_keys:
         counter_contour += 1
         
         # Define the X values for the plot
-        x_values_for_plot = np.array(X_np_all[counter_xnp][0][:len(delta_e)]).flatten() * 1000
+        x_values_for_plot = np.array(X_np_all[counter_xnp][0][:len(np.unique(delta_e))]).flatten() * 1000
         
         
         # Plot the current threshold
@@ -870,10 +901,6 @@ counter = 0
 #%% delta_e vs X[mm] where, the separation tool is being implemented  ######
 
 
-import matplotlib.pyplot as plt
-import numpy as np
-
-# Assuming `x_values_for_plot`, `results`, `wall_shear_all`, `mach_labels`, `omega_thresholds`, `X_np`, `x_sorted`, and `y_sorted` are already defined
 
 timesFont = {"fontname": "Times New Roman"}
 
@@ -885,8 +912,10 @@ for mach_key in mach_labels:
     # Get wall_shear_all for the current Mach number
     wall_shear = np.array(results[mach_key]["wall_shear_all"])  # Shape: 77 x 3500
 
-    cmap = cm.get_cmap('viridis', len(omega_thresholds))  # Get 'viridis' colormap
+    #cmap = cm.get_cmap('viridis', len(omega_thresholds))  # Get 'viridis' colormap
     counter = 0
+    
+    
 
     # Loop through each omega threshold and add a plot for each
     for omega in omega_thresholds:
@@ -933,9 +962,6 @@ for mach_key in mach_labels:
     # Close the current figure to prevent overlap
     plt.close(fig)
 
-
-    
-    
 
 
 
