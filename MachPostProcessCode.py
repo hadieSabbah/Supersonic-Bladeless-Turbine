@@ -211,85 +211,37 @@ ds_by_case, ds_by_case_quad, ds_by_case_inlet = bigImport(base_dir,fileName)
 """
 
 
-import pickle
-import shutil
-from datetime import date
-from pathlib import Path
 
-# Getting today's date in MM_DD_YYYY format
-today = date.today()
-formatted_date = f"{today.month:02d}_{today.day:02d}_{today.year}"
+def runSaver(base_dir_dic = Path(r"C:\Users\hhsabbah\Documents\01_Bladeless_Proj\32_Geometry Code\Python Results\Mach Study") ):
+    import pickle
+    import shutil
+    from datetime import date
+    from pathlib import Path
+    
+    # Getting today's date in MM_DD_YYYY format
+    today = date.today()
+    formatted_date = f"{today.month:02d}_{today.day:02d}_{today.year}"
+    
+    
+    # Create save directory (remove if exists)
+    save_dir = base_dir_dic / formatted_date
+    if save_dir.exists():
+        shutil.rmtree(save_dir)
+    save_dir.mkdir()
+    
+    # Saving cases # 
+    with open(save_dir / "ds_by_case.pkl", "wb") as f:
+        pickle.dump(ds_by_case, f)
+    with open(save_dir / "ds_by_case_quad.pkl", "wb") as f:
+        pickle.dump(ds_by_case_quad, f)
+    with open(save_dir / "ds_by_case_inlet.pkl", "wb") as f:
+        pickle.dump(ds_by_case_inlet, f)
+        return 
 
-# Base directory for the dictionaries
-base_dir_dic = Path(r"C:\Users\hhsabbah\Documents\01_Bladeless_Proj\32_Geometry Code\Python Results\Mach Study")
-
-# Create save directory (remove if exists)
-save_dir = base_dir_dic / formatted_date
-if save_dir.exists():
-    shutil.rmtree(save_dir)
-save_dir.mkdir()
-
-# Saving
-with open(save_dir / "ds_by_case.pkl", "wb") as f:
-    pickle.dump(ds_by_case, f)
-with open(save_dir / "ds_by_case_quad.pkl", "wb") as f:
-    pickle.dump(ds_by_case_quad, f)
-with open(save_dir / "ds_by_case_inlet.pkl", "wb") as f:
-    pickle.dump(ds_by_case_inlet, f)
-with open(save_dir / "index_by_case.pkl", "wb") as f:
-    pickle.dump(index_by_case, f)
 
 
     
 
-
-#%%
-
-"""
-#------------------------------------------------------------------------------------------------------------------------------------#
-                                                   Saving all my variables that are currently loaded  
-#------------------------------------------------------------------------------------------------------------------------------------#
-
-"""
- 
-import pickle
-import types
-from datetime import date
-
-
-# FIXED VERSION - Test if each item is actually pickleable
-all_vars = {}
-for k, v in globals().items():
-    # Skip obvious non-pickleable types
-    if isinstance(v, (types.ModuleType, types.FunctionType, 
-                     types.BuiltinFunctionType, type)):
-        continue
-    
-    # Skip private/internal variables
-    if k.startswith('_'):
-        continue
-    
-    # Try to pickle it - this catches hidden issues
-    try:
-        pickle.dumps(v)  # Test if it can be pickled
-        all_vars[k] = v  # Only add if successful
-    except Exception as e:
-        # This will catch your mpl_execfile error
-        print(f"Skipping {k}: {type(e).__name__}")
-        continue
-
-print(f"Successfully filtered {len(all_vars)} pickleable variables")
-
-
-
-# Saving all variables BUT skipping all module objects. # 
-today = date.today()
-d1 = today.strftime("%m_%d_%Y")
-
-with open(os.path.join(save_dir,f'all_variables_{d1}.pkl'),"wb") as f:
-    pickle.dump(all_vars,f)
-    
-    
 
     
 #%% 
@@ -342,38 +294,40 @@ def list_top_directories(base_dir_dic) :
     return top_dircs , top_dirc_names
 
 
-### Defining the base directory ###
-load_dir_dic = r"C:\Users\hhsabbah\Documents\01_Bladeless_Proj\32_Geometry Code\Python Results\Mach Study"
+
+# Loads the runs into python # 
+def runLoader(load_dir_dic = r"C:\Users\hhsabbah\Documents\01_Bladeless_Proj\32_Geometry Code\Python Results\Mach Study"):
+
+    ### Loading the top directory and the top directory names #  
+    top_dircs, top_dirc_names = list_top_directories(load_dir_dic)
+    
+    
+    # Finding the latest date # 
+    latest_date = max(top_dirc_names)
+    
+    
+    # Defining the latest saved file # 
+    latest_date_dir = Path(load_dir_dic + '//' + latest_date)
+    
+    test = rf"{latest_date_dir}\ds_by_case.pkl"
+    
+    
+    # Loading all the data in automatically based on the latest date # 
+    
+    with open(rf"{latest_date_dir}\ds_by_case.pkl", "rb") as f:
+        ds_by_case = pickle.load(f)
+    with open(rf"{latest_date_dir}\ds_by_case_quad.pkl", "rb") as f:
+        ds_by_case_quad = pickle.load(f)
+    with open(rf"{latest_date_dir}\ds_by_case_inlet.pkl", "rb") as f:
+        ds_by_case_inlet = pickle.load(f)
+    with open(rf"{latest_date_dir}\index_by_case.pkl", "rb") as f:
+        index_by_case = pickle.load(f)
+        return ds_by_case, ds_by_case_quad, ds_by_case_inlet, index_by_case
 
 
-### Loading the top directory and the top directory names #  
-top_dircs, top_dirc_names = list_top_directories(load_dir_dic)
 
-
-# Finding the latest date # 
-latest_date = max(top_dirc_names)
-
-
-# Defining the latest saved file # 
-latest_date_dir = Path(load_dir_dic + '//' + latest_date)
-
-test = rf"{latest_date_dir}\ds_by_case.pkl"
-
-
-# Loading all the data in automatically based on the latest date # 
-
-with open(rf"{latest_date_dir}\ds_by_case.pkl", "rb") as f:
-    ds_by_case = pickle.load(f)
-with open(rf"{latest_date_dir}\ds_by_case_quad.pkl", "rb") as f:
-    ds_by_case_quad = pickle.load(f)
-with open(rf"{latest_date_dir}\ds_by_case_inlet.pkl", "rb") as f:
-    ds_by_case_inlet = pickle.load(f)
-with open(rf"{latest_date_dir}\index_by_case.pkl", "rb") as f:
-    index_by_case = pickle.load(f)
-
-
-
-
+# Saving the files in a certain format #
+ds_by_case, ds_by_case_quad, ds_by_case_inlet,_ = runLoader()
         
 
 
