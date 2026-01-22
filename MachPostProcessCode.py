@@ -68,124 +68,131 @@ def assign_dir(title='Select Folder'):
 
 
 
-"""
-#-----------------------------------------------------------------------------------------------------------------------------#
-    Getting quantitative reuslts from the data that was extracted, e.g. Reynolds number, Wall shear stress, etc etc. 
-#-----------------------------------------------------------------------------------------------------------------------------#
+# Creating a function that imports the data  # 
+def bigImport(base_dir,fileName):
+    
+    # Finding all the h_l_names from the folders # 
+    h_l_names = []
+    for subdir in base_dir.glob("*/*/"):
+        if subdir.is_dir():
+            h_l_names.append(subdir.name)
 
-"""
+
+    # Root directory to import mcfd_tec.bin files # 
+    subDirs1 = [p for p in base_dir.iterdir() if p.is_dir()]
+    
+    # Finding all mcfd_tec.bin files and getting variables # 
+    subDirs2 = [p for d in subDirs1 for p in d.iterdir() if p.is_dir()]  # flattened
+    file_paths = [p / fileName for p in subDirs2]
+    
+    
+    # Extracting variables from tecplot # 
+    test = tp.data.load_tecplot(file_paths[0].as_posix())
+
+
+    # Extracting Values from Certain Zones # 
+    section_zone = test.zone("Section")
+    
+    
+    # All variable names in the dataset
+    var_names = [v.name for v in test.variables()]
+    
+    
+    #### Extracting Variables from Section Zone ####
+    
+    # Build dict: {var_name: numpy_array}
+    data = {}
+    for var in var_names:
+        try:
+            data[var] = section_zone.values(test.variable(var)).as_numpy_array()
+        except Exception as e:
+            print(f"Skipping {var}: not found")
+    
+    
+    
+    
+    
+    # Getting case names using regex library #
+    case_re = re.compile(r"h_l_(?P<hl>[\d.]+)_p0_(?P<p0>\d+)bar")
+    
+    
+    
+    # Pre-Allocating dictionaries for each section # 
+    ds_by_case = {} 
+    ds_by_case_quad = {}
+    ds_by_case_inlet = {}         # key: case name (e.g., 'h_l_0.01_p0_1bar'), value: xarray.Dataset
+    ds_by_case_leftWall = {}
+    ds_by_case_rightWall = {}
+    index_by_case = {}       # key -> (h_l, p0_bar)
+    
+    
+    # Looping through each file path # 
+    for file_path in file_paths:
+        if not file_path.is_file():
+            continue
+    
+        # Load each case (you were loading only file_paths[0])
+        tp.new_layout() # Creating a new tecplot layout. 
+        test = tp.data.load_tecplot(file_path.as_posix())
+        
+        
+        # Extracting zones !!!! Should be less hardcoded. Works for now however.... # 
+        section_zone = test.zone("Section")
+        cells_zone = test.zone("QUADRILATERAL_cells")
+        inlet_zone = test.zone("Inlet")
+        
+        # Getting all the variables available in the dataset with PyTecplot # 
+        var_names = [v.name for v in test.variables()]
+        
+        # Grab values into a plain dict
+        data = {}
+        data_cells = {}
+        data_inlet = {}
+        
+        # for loop to get all the ariabes in each section #
+        for var in var_names:
+            try:
+                data[var] = section_zone.values(test.variable(var)).as_numpy_array()
+                data_cells[var] = cells_zone.values(test.variable(var)).as_numpy_array()
+                data_inlet[var] = inlet_zone.values(test.variable(var)).as_numpy_array()
+            except Exception:
+                pass
+    
+        # Making a dataset for each case # 
+        ds_case = dict_to_ds_1d(data)
+        ds_case_quad = dict_to_ds_1d(data_cells)
+        ds_case_inlet = dict_to_ds_1d(data_inlet)
+        
+        # key by the folder name that contains the file, e.g. 'h_l_0.01_p0_1bar'
+        case_name = file_path.parent.name
+        ds_by_case[case_name] = ds_case
+        ds_by_case_quad[case_name] = ds_case_quad
+        ds_by_case_inlet[case_name] = ds_case_inlet
+    
+        # parse h_l and p0 for optional stacking later
+        m = case_re.fullmatch(case_name)
+        if m:
+            h_l = float(m.group("hl"))
+            p0_bar = float(m.group("p0"))
+            index_by_case[case_name] = (h_l, p0_bar)
+    
+    return ds_by_case, ds_by_case_quad, ds_by_case_inlet
 
 
 ### Post-Processing for the Stagnation Pressure sweep study ###
 tp.session.connect()
+
+# Defined Values # 
 base_dir = Path(rf"{assign_dir()}")
-
-# Finding all the h_l_names from the folders # 
-h_l_names = []
-for subdir in base_dir.glob("*/*/"):
-    if subdir.is_dir():
-        h_l_names.append(subdir.name)
-
-
-
-# Root directory to import mcfd_tec.bin files # 
-subDirs1 = [p for p in base_dir.iterdir() if p.is_dir()]
-
-
-# Finding all mcfd_tec.bin files and getting variables # 
 fileName = "mcfd_tec.bin"
-subDirs2 = [p for d in subDirs1 for p in d.iterdir() if p.is_dir()]  # flattened
-file_paths = [p / fileName for p in subDirs2]
-
-
-# Extracting variables from tecplot # 
-test = tp.data.load_tecplot(file_paths[0].as_posix())
-
-
-# Extracting Values from Certain Zones # 
-section_zone = test.zone("Section")
-
-# All variable names in the dataset
-var_names = [v.name for v in test.variables()]
-
-
-#### Extracting Variables from Section Zone ####
-
-# Build dict: {var_name: numpy_array}
-data = {}
-for var in var_names:
-    try:
-        data[var] = section_zone.values(test.variable(var)).as_numpy_array()
-    except Exception as e:
-        print(f"Skipping {var}: not found")
+ds_by_case, ds_by_case_quad, ds_by_case_inlet = bigImport(base_dir,fileName)
 
 
 
 
 
-# Getting case names using regex library #
-case_re = re.compile(r"h_l_(?P<hl>[\d.]+)_p0_(?P<p0>\d+)bar")
 
 
-
-# Pre-Allocating dictionaries for each section # 
-ds_by_case = {} 
-ds_by_case_quad = {}
-ds_by_case_inlet = {}         # key: case name (e.g., 'h_l_0.01_p0_1bar'), value: xarray.Dataset
-ds_by_case_leftWall = {}
-ds_by_case_rightWall = {}
-index_by_case = {}       # key -> (h_l, p0_bar)
-
-
-# Looping through each file path # 
-for file_path in file_paths:
-    if not file_path.is_file():
-        continue
-
-    # Load each case (you were loading only file_paths[0])
-    tp.new_layout() # Creating a new tecplot layout. 
-    test = tp.data.load_tecplot(file_path.as_posix())
-    
-    
-    # Extracting zones !!!! Should be less hardcoded. Works for now however.... # 
-    section_zone = test.zone("Section")
-    cells_zone = test.zone("QUADRILATERAL_cells")
-    inlet_zone = test.zone("Inlet")
-    
-    # Getting all the variables available in the dataset with PyTecplot # 
-    var_names = [v.name for v in test.variables()]
-    
-    # Grab values into a plain dict
-    data = {}
-    data_cells = {}
-    data_inlet = {}
-    
-    # for loop to get all the ariabes in each section #
-    for var in var_names:
-        try:
-            data[var] = section_zone.values(test.variable(var)).as_numpy_array()
-            data_cells[var] = cells_zone.values(test.variable(var)).as_numpy_array()
-            data_inlet[var] = inlet_zone.values(test.variable(var)).as_numpy_array()
-        except Exception:
-            pass
-
-    # Making a dataset for each case # 
-    ds_case = dict_to_ds_1d(data)
-    ds_case_quad = dict_to_ds_1d(data_cells)
-    ds_case_inlet = dict_to_ds_1d(data_inlet)
-    
-    # key by the folder name that contains the file, e.g. 'h_l_0.01_p0_1bar'
-    case_name = file_path.parent.name
-    ds_by_case[case_name] = ds_case
-    ds_by_case_quad[case_name] = ds_case_quad
-    ds_by_case_inlet[case_name] = ds_case_inlet
-
-    # parse h_l and p0 for optional stacking later
-    m = case_re.fullmatch(case_name)
-    if m:
-        h_l = float(m.group("hl"))
-        p0_bar = float(m.group("p0"))
-        index_by_case[case_name] = (h_l, p0_bar)
         
         
 
