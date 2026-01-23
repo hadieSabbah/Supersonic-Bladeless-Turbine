@@ -3,186 +3,29 @@ import numpy as np
 from pathlib import Path
 import tecplot as tp
 
-# --- add these imports near the top ---
-import re
-import numpy as np
-import xarray as xr
-import tecplot as tp
-from pathlib import Path
-
-# Tkinter Library (GUI) #
-import tkinter as tk
-from tkinter import filedialog
-from tkinter import Tk
-from tkinter.filedialog import askdirectory
-from tkinter import Tk
-from tkinter.filedialog import askdirectory
 
 
 
-###### =============== Functions =============== #######
-def dict_to_ds_1d(data):
-    """{var: np.array} -> xarray.Dataset with dim 'n'."""
-    return xr.Dataset({k: (("n",), np.asarray(v)) for k, v in data.items()})
+"""
+#------------------------------------------------------------------------------------------------------------------------------------#
+                                                    Data importing and exporting
+#------------------------------------------------------------------------------------------------------------------------------------#
+
+"""
+from utils.parameterComputation import variableImporterMasked, ReCompute, yplusThreshold
+from utils.dataload_util import assign_dir, bigImport, runSaver, runLoader
+from utils.plotting import plotter, plotter_multi_all, plotter_multiPerCase, subplotter, residual_plotter
 
 
-
-
-# Assigning directory so it can be used throughout the entire code # 
-def assign_dir(title='Select Folder'):
-    """
-    Open a directory selection dialog.
-    
-    Why this works:
-    1. We explicitly create and manage the root window
-    2. We hide it so the user only sees the dialog
-    3. We force the dialog to the front
-    4. We clean up after ourselves
-    """
-    # Create root window (required parent for dialogs)
-    root = Tk()
-    
-    # Hide it - we only want the dialog, not an empty window
-    root.withdraw()
-    
-    # CRITICAL: Bring to front (fixes "invisible dialog" issue)
-    root.attributes('-topmost', True)
-    
-    # For Spyder/Jupyter: force an update to process the window
-    root.update()
-    
-    # NOW open the dialog
-    path = askdirectory(title=title)
-    
-    # Clean up
-    root.destroy()
-    
-    if path:
-        print(f"Selected: {path}")
-        return path
-    else:
-        print("Cancelled")
-        return None
-
-
-
-
-
-# Creating a function that imports the data  # 
-def bigImport(base_dir,fileName):
-    
-    # Finding all the h_l_names from the folders # 
-    h_l_names = []
-    for subdir in base_dir.glob("*/*/"):
-        if subdir.is_dir():
-            h_l_names.append(subdir.name)
-
-
-    # Root directory to import mcfd_tec.bin files # 
-    subDirs1 = [p for p in base_dir.iterdir() if p.is_dir()]
-    
-    # Finding all mcfd_tec.bin files and getting variables # 
-    subDirs2 = [p for d in subDirs1 for p in d.iterdir() if p.is_dir()]  # flattened
-    file_paths = [p / fileName for p in subDirs2]
-    
-    
-    # Extracting variables from tecplot # 
-    test = tp.data.load_tecplot(file_paths[0].as_posix())
-
-
-    # Extracting Values from Certain Zones # 
-    section_zone = test.zone("Section")
-    
-    
-    # All variable names in the dataset
-    var_names = [v.name for v in test.variables()]
-    
-    
-    #### Extracting Variables from Section Zone ####
-    
-    # Build dict: {var_name: numpy_array}
-    data = {}
-    for var in var_names:
-        try:
-            data[var] = section_zone.values(test.variable(var)).as_numpy_array()
-        except Exception as e:
-            print(f"Skipping {var}: not found")
-    
-    
-    
-    
-    
-    # Getting case names using regex library #
-    case_re = re.compile(r"h_l_(?P<hl>[\d.]+)_p0_(?P<p0>\d+)bar")
-    
-    
-    
-    # Pre-Allocating dictionaries for each section # 
-    ds_by_case = {} 
-    ds_by_case_quad = {}
-    ds_by_case_inlet = {}         # key: case name (e.g., 'h_l_0.01_p0_1bar'), value: xarray.Dataset
-    ds_by_case_leftWall = {}
-    ds_by_case_rightWall = {}
-    index_by_case = {}       # key -> (h_l, p0_bar)
-    
-    
-    # Looping through each file path # 
-    for file_path in file_paths:
-        if not file_path.is_file():
-            continue
-    
-        # Load each case (you were loading only file_paths[0])
-        tp.new_layout() # Creating a new tecplot layout. 
-        test = tp.data.load_tecplot(file_path.as_posix())
-        
-        
-        # Extracting zones !!!! Should be less hardcoded. Works for now however.... # 
-        section_zone = test.zone("Section")
-        cells_zone = test.zone("QUADRILATERAL_cells")
-        inlet_zone = test.zone("Inlet")
-        
-        # Getting all the variables available in the dataset with PyTecplot # 
-        var_names = [v.name for v in test.variables()]
-        
-        # Grab values into a plain dict
-        data = {}
-        data_cells = {}
-        data_inlet = {}
-        
-        # for loop to get all the ariabes in each section #
-        for var in var_names:
-            try:
-                data[var] = section_zone.values(test.variable(var)).as_numpy_array()
-                data_cells[var] = cells_zone.values(test.variable(var)).as_numpy_array()
-                data_inlet[var] = inlet_zone.values(test.variable(var)).as_numpy_array()
-            except Exception:
-                pass
-    
-        # Making a dataset for each case # 
-        ds_case = dict_to_ds_1d(data)
-        ds_case_quad = dict_to_ds_1d(data_cells)
-        ds_case_inlet = dict_to_ds_1d(data_inlet)
-        
-        # key by the folder name that contains the file, e.g. 'h_l_0.01_p0_1bar'
-        case_name = file_path.parent.name
-        ds_by_case[case_name] = ds_case
-        ds_by_case_quad[case_name] = ds_case_quad
-        ds_by_case_inlet[case_name] = ds_case_inlet
-    
-        # parse h_l and p0 for optional stacking later
-        m = case_re.fullmatch(case_name)
-        if m:
-            h_l = float(m.group("hl"))
-            p0_bar = float(m.group("p0"))
-            index_by_case[case_name] = (h_l, p0_bar)
-    
-    return ds_by_case, ds_by_case_quad, ds_by_case_inlet
-
-
-### Post-Processing for the Stagnation Pressure sweep study ###
+#%%
+### Connecting to the session # 
 tp.session.connect()
 
-# Defined Values # 
+#%%
+#### Importing and processing raw data ####
+
+
+# Defining values #
 base_dir = Path(rf"{assign_dir()}")
 fileName = "mcfd_tec.bin"
 ds_by_case, ds_by_case_quad, ds_by_case_inlet = bigImport(base_dir,fileName)
@@ -190,286 +33,63 @@ ds_by_case, ds_by_case_quad, ds_by_case_inlet = bigImport(base_dir,fileName)
 
 
 
+#%% Importing processed data ###
 
-
-
-        
-        
-
-
+ds_by_case,ds_by_quad, ds_by_inlet = runLoader() 
 
 
 
 
-#%%
-
-"""
-#------------------------------------------------------------------------------------------------------------------------------------#
-    Saving all dictionaries from the previous run. This saves time since you will not have to post-process the results every time...
-#------------------------------------------------------------------------------------------------------------------------------------#
-
-"""
+#%% Saving data if needed ###
 
 
-
-def runSaver(base_dir_dic = Path(r"C:\Users\hhsabbah\Documents\01_Bladeless_Proj\32_Geometry Code\Python Results\Mach Study") ):
-    import pickle
-    import shutil
-    from datetime import date
-    from pathlib import Path
-    
-    # Getting today's date in MM_DD_YYYY format
-    today = date.today()
-    formatted_date = f"{today.month:02d}_{today.day:02d}_{today.year}"
-    
-    
-    # Create save directory (remove if exists)
-    save_dir = base_dir_dic / formatted_date
-    if save_dir.exists():
-        shutil.rmtree(save_dir)
-    save_dir.mkdir()
-    
-    # Saving cases # 
-    with open(save_dir / "ds_by_case.pkl", "wb") as f:
-        pickle.dump(ds_by_case, f)
-    with open(save_dir / "ds_by_case_quad.pkl", "wb") as f:
-        pickle.dump(ds_by_case_quad, f)
-    with open(save_dir / "ds_by_case_inlet.pkl", "wb") as f:
-        pickle.dump(ds_by_case_inlet, f)
-        return 
-
-
-
-    
-
-
-    
-#%% 
-
-"""
-#------------------------------------------------------------------------------------------------------------------------------------#
-                                            Here you can load your data from previously saved run
-#------------------------------------------------------------------------------------------------------------------------------------#
-
-"""
-
- 
-import pickle
-import types
-from datetime import date
-import xarray as xr
-import numpy as np
-from pathlib import Path
-import tecplot as tp
-
-# --- add these imports near the top ---
-import re
-import numpy as np
-import xarray as xr
-import tecplot as tp
-from pathlib import Path
-
-
-#### Functions ####
-
-
-# Converting dictionaries to 1d datasets # 
-def dict_to_ds_1d(data):
-    """{var: np.array} -> xarray.Dataset with dim 'n'."""
-    return xr.Dataset({k: (("n",), np.asarray(v)) for k, v in data.items()})
-
-
-# A function that lists all the top directories #
-def list_top_directories(base_dir_dic) :
-    p = Path(base_dir_dic)
-    top_dircs = [entry for entry in p.iterdir() if entry.is_dir()]
-    
-    # Pre-allocating Variables # 
-    top_dirc_names = []
-    
-    # For loop to determine the top directory names # 
-    for top_dirc in top_dircs:
-        top_dirc_names.append(top_dirc.parts[-1])
-        
-    return top_dircs , top_dirc_names
-
-
-
-# Loads the runs into python # 
-def runLoader(load_dir_dic = r"C:\Users\hhsabbah\Documents\01_Bladeless_Proj\32_Geometry Code\Python Results\Mach Study"):
-
-    ### Loading the top directory and the top directory names #  
-    top_dircs, top_dirc_names = list_top_directories(load_dir_dic)
-    
-    
-    # Finding the latest date # 
-    latest_date = max(top_dirc_names)
-    
-    
-    # Defining the latest saved file # 
-    latest_date_dir = Path(load_dir_dic + '//' + latest_date)
-    
-    test = rf"{latest_date_dir}\ds_by_case.pkl"
-    
-    
-    # Loading all the data in automatically based on the latest date # 
-    
-    with open(rf"{latest_date_dir}\ds_by_case.pkl", "rb") as f:
-        ds_by_case = pickle.load(f)
-    with open(rf"{latest_date_dir}\ds_by_case_quad.pkl", "rb") as f:
-        ds_by_case_quad = pickle.load(f)
-    with open(rf"{latest_date_dir}\ds_by_case_inlet.pkl", "rb") as f:
-        ds_by_case_inlet = pickle.load(f)
-    with open(rf"{latest_date_dir}\index_by_case.pkl", "rb") as f:
-        index_by_case = pickle.load(f)
-        return ds_by_case, ds_by_case_quad, ds_by_case_inlet, index_by_case
-
-
-
-# Saving the files in a certain format #
-ds_by_case, ds_by_case_quad, ds_by_case_inlet,_ = runLoader()
-        
+runSaver(ds_by_case, ds_by_case_quad, ds_by_case_inlet)
 
 
 
 #%%
-"""
-#------------------------------------------------------------------------------------------------------------------------------------#
-                                            Computing Parameters: Reynolds Number, y+ value, Residuals, Net Mass Flux
-#------------------------------------------------------------------------------------------------------------------------------------#
-
-"""
-
-# Computing Reynolds number for each case #
-import numpy as np
-
-def global_max_from_dict(arrs, ignore_nan=True):
-    """
-    arrs: dict[str, np.ndarray]
-    Returns: (key, index_or_indices, value)
-    """
-    best_key = None
-    best_idx = None
-    best_val = -np.inf
-
-    for k, a in arrs.items():
-        if a.size == 0:
-            continue
-        if ignore_nan:
-            # skip arrays that are all-NaN
-            if np.isnan(a).all():
-                continue
-            flat_idx = np.nanargmax(a)
-            val = a.reshape(-1)[flat_idx]
-        else:
-            flat_idx = np.argmax(a)
-            val = a.reshape(-1)[flat_idx]
-
-        if val > best_val:
-            best_val = val
-            best_key = k
-            best_idx = np.unravel_index(flat_idx, a.shape)  # handles 1D/2D/ND
-
-    if best_key is None:
-        raise ValueError("No valid elements found (arrays empty or all-NaN).")
-
-    return best_key, best_idx, best_val
-
-
-
 
 """
 #------------------------------------------------------------------------------------------------------------------------------------#
-                                                                Computing Reynolds Number
+                                        Computing ALL Variables and putting them in a dictionary 
 #------------------------------------------------------------------------------------------------------------------------------------#
 
 """
 
 
-# All unit Conversions #
-# Unit conversion setup # 
+# Defining Variables # 
+min_l = 0 
+max_l = 0.1
 
+# Data at the wall masked #
+y_plus, tau_x, tau_y, tau_separation, tau_separation_idx, \
+x, y, T, P, Px, Py, P0, rho, mach, \
+omega_z, u, v, q_dot, mu_tur = \
+    variableImporterMasked(ds_by_case, min_l, max_l)
 
-# Getting Reynolds Number # 
-Re = {}
-Re_wall = {} 
+# Data at the entire quadrant # 
+y_plus_quad, tau_x_quad, tau_y_quad, tau_separation_quad, tau_separation_idx_quad, \
+x_quad, y_quad, T_quad, P_quad, Px_quad, Py_quad, P0_quad, rho_quad, mach_quad, \
+omega_z_quad, u_quad, v_quad, q_dot_quad, mu_tur_quad = \
+    variableImporterMasked(ds_by_case_quad, 0, 0, mask_input = False)
 
-
-# Getting All Variables to compute Reynolds number # 
-
-
-for key in ds_by_case:
-    mu_ref = 1.78e-5 #Pa*s
-    T = ds_by_case[key]["T"].data
-    T_ref = 300 # kelvin
-    S = 120 #kelvin
-    
-    mu = (mu_ref * (T/T_ref)**(1.5)) * ((T_ref + S)/ (T + S))
-    U = ds_by_case_inlet[key]["U"].data
-    rho = ds_by_case_inlet[key]["R"].data
-    X = 0.1
-    print(np.mean(rho))
-    print(np.mean(U))
-    print()
-    Re[key] = (np.mean(rho) * (np.mean(U) ) * X ) / np.mean(mu) # this is just a test. Re wall is not a thing. Well, it is, but you use boundary layer thickness to compute that stuff not the length of the entire thing...
-   
-    
-ReMAX = global_max_from_dict(Re)
-
-
-
-
-"""
-#------------------------------------------------------------------------------------------------------------------------------------#
-                                                                Computing Y+
-#------------------------------------------------------------------------------------------------------------------------------------#
-
-"""
-
-# Finding the y+ values and also the max y+ value # 
-y_plus = {}
-for key in ds_by_case:
-   y_plus[key] =  ds_by_case[key]["Y_plus"].data
-    
-
-
-y_plusMAX = global_max_from_dict(y_plus)
-print(f"The global Max y_plus value is: {y_plusMAX[2]:.2f}\n")
-
-
-
-"""
-#------------------------------------------------------------------------------------------------------------------------------------#
-                                                        Computing Wall shear Stress(tau_x)
-#------------------------------------------------------------------------------------------------------------------------------------#
-
-"""
-
-# Finding the wall shear stress along the wall # 
-tau_x = {}
-tau_y = {}
-X_geom = {}
-tau_separation = {}
-tau_separation_idx = {}
-
-# Masking for x geometry # 
-
-for key in ds_by_case:
-    tau_x[key] = ds_by_case[key]["Tau_x"].data
-    tau_y[key] = ds_by_case[key]["Tau_y"].data
-    X_geom[key] = ds_by_case[key]["X"].data
-    y_plus[key] = ds_by_case[key]["Y_plus"].data
-    # Masking # 
-    mask = (X_geom[key] >= 0) & (X_geom[key] <= 0.1)
-    X_geom[key], tau_y[key], tau_x[key],y_plus[key] = X_geom[key][mask] , tau_y[key][mask], tau_x[key][mask], y_plus[key][mask]
+# Data at the inlet # 
+y_plus_inlet, tau_x_inlet, tau_y_inlet, tau_separation_inlet, tau_separation_idx_inlet, \
+x_inlet, y_inlet, T_inlet, P_inlet, Px_inlet, Py_inlet, P0_inlet, rho_inlet, mach_inlet, \
+omega_z_inlet, u_inlet, v_inlet, q_dot_inlet, mu_tur_inlet = \
+    variableImporterMasked(ds_by_case_inlet, 0, 0, mask_input = False)
     
     
     
-    #### COMPUTING THE FIRST POINTS AT WHICH A TAU_Y GOES BELOW ZERO ######
-    first_index_tau = np.argmax(tau_x[key] < 0)
-    tau_separation[key] = tau_x[key][first_index_tau] #finds the first point at which separation occurs for each h_l case and pressure
-    tau_separation_idx[key] = first_index_tau
-        
+    
+    
+    
+    
+    
+    
+    
+    
+
 #%%
 
 """
@@ -550,6 +170,8 @@ else:
     fig.tight_layout()
     plt.show()
 
+
+
 #%%
 
 
@@ -563,7 +185,7 @@ else:
 ## Plotting the results of tau_x to see how they differ from one another ##
 import matplotlib.pyplot as plt
 import matplotlib.cm as cm
-
+import re
 
 plt.figure(figsize = (8,6))
 # --- Group the cases by h_l value ---
@@ -581,30 +203,32 @@ for key in ds_by_case:
 """
 #------------------------------------------------------------------------------------------------------------------------------------#
                                                      Plotting Wall Shear stress
-#------------------------------------------------------------------------------------------------------------------------------------#
+#----------------------------------------'--------------------------------------------------------------------------------------------#
  
 """  
 
  
 # --- Plot for each h_l group: Plotting tau_y(wall shear stress) ---
-for hl, case_keys in cases_by_hl.items():
-    plt.figure(figsize=(8,6))
 
-    
-    for i , key in enumerate(case_keys):
-        # Use colormap # 
-        cmap = cm.get_cmap("cividis",len(case_keys))
-        plt.plot(X_geom[key], tau_x[key], label=key , color = cmap(i),linewidth = 2)
-    
 
-    plt.title(fr"$\tau_x$ vs X for {hl}",fontsize = 21)
-    plt.axhline(y=0, color='r', linestyle='--', label='Separation')
-    plt.xlabel("X [m]" , fontsize = 16)
-    plt.ylabel(r"$\tau_x$ [Pa]", fontsize = 16)
-    plt.grid(True, which="both")
-    plt.legend(loc = "center left",bbox_to_anchor = (1,0.5))
-    plt.show()
-    
+h_l_list = np.arange(0.02,0.09 + 0.01,0.01)
+
+
+for h_l in h_l_list:
+    fig, ax = plotter_multiPerCase(
+        x_dict=x,
+        y_dict=tau_x,
+        x_string='x',
+        y_string=r'$\tau_x$',
+        unit_x='[m]',
+        unit_y='[Pa]',
+        filter_param='h_l',
+        filter_value= round(h_l,2),
+        vary_param='mach',
+        cmap_name='cividis'
+    )
+
+        
 
 """
 #------------------------------------------------------------------------------------------------------------------------------------#
@@ -615,22 +239,20 @@ for hl, case_keys in cases_by_hl.items():
   
     
 # Plotting Y+ values on top of each other # 
-for hl, case_keys in cases_by_hl.items():
-    plt.figure(figsize=(8,6))
 
-    
-    for i , key in enumerate(case_keys):
-        # Use colormap # 
-        cmap = cm.get_cmap("cividis",len(case_keys))
-        plt.plot(X_geom[key], y_plus[key], label=key , color = cmap(i),linewidth = 2)
-    
-
-    plt.title(fr"$y^+$ vs X for {hl}",fontsize = 21)
-    plt.xlabel("X [m]" , fontsize = 16)
-    plt.ylabel(r"$y^+$", fontsize = 16)
-    plt.grid(True, which="both")
-    plt.legend(loc = "center left",bbox_to_anchor = (1,0.5))
-    plt.show()    
+for h_l in h_l_list:
+    fig, ax = plotter_multiPerCase(
+        x_dict=x,
+        y_dict=y_plus,
+        x_string='x',
+        y_string=r'$y^{+}$',
+        unit_x='[m]',
+        unit_y='',
+        filter_param='h_l',
+        filter_value= round(h_l,2),
+        vary_param='mach',
+        cmap_name='cividis'
+    )
 
 
 #%%
@@ -649,38 +271,38 @@ from scipy.interpolate import UnivariateSpline
 
 
 
-for key in ds_by_case:
+for key in x.keys():
     # Pre-allocating Variables #
     tau_y_list = []
     sep_length = []
     
-    
-    #### GPT Test ####
     # your arrays
-    x = X_geom[key]
-    y = tau_y[key]
+    x_data = x[key]
+    y_data = tau_y[key]
     
     # x, y are your 1D arrays
-    s = UnivariateSpline(x, y, s=0)   # s=0 -> exact through points (use s>0 to smooth)
-    x_zeros = s.roots()               # continuous x-positions where y=0
-    idx_nearest = np.searchsorted(x, x_zeros)
+    s = UnivariateSpline(x_data, y_data, s=0)
+    x_zeros = s.roots()
+    idx_nearest = np.searchsorted(x_data, x_zeros)
     
-    
-    #Obtaining the separation lenght based on the scipy function # 
-    for i in range(len(idx_nearest) -1):
+    # Obtaining the separation length
+    for i in range(len(idx_nearest) - 1):
         np.array(tau_y_list.append(tau_y[key][idx_nearest[i]:idx_nearest[i+1]]))
-        sep_length.append(X_geom[key][idx_nearest[i+1]] - X_geom[key][idx_nearest[i]])
-      
-        
-    #Getting the separation location and the respective tau, respectively # 
-    sep_location = [X_geom[key][idx_nearest[k]] for k in range(len(idx_nearest))]
+        sep_length.append(x[key][idx_nearest[i+1]] - x[key][idx_nearest[i]])
+    
+    # Getting the separation location and respective tau
+    sep_location = [x[key][idx_nearest[k]] for k in range(len(idx_nearest))]
     tau_y_location = [tau_y[key][idx_nearest[k]] for k in range(len(idx_nearest))]
     
+    # Use plotter but get fig, ax to add scatter points
+    fig, ax = plotter(x_data, y_data, 'x', r'$\tau_y$', '[m]', '[Pa]', 
+                      save=False, return_axes = True)
     
-    # Plotting Graphs 
-    plt.plot(X_geom[key],tau_y[key], label = 'Tau_y')
-    plt.scatter(sep_location,tau_y_location,color = 'red', label = 'Separation Points')
-    plt.grid(True,which = "both")
+    # Add separation points
+    ax.scatter(sep_location, tau_y_location, color='red', s=50, 
+               label='Separation Points', zorder=5)
+    ax.legend()
+    
     plt.show()
 
 
@@ -698,302 +320,19 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 
-def load_residuals(path, skiprows=3, ncols=4):
-    # Read all columns as strings, whitespace-separated
-    df = pd.read_csv(path, sep=r"\s+", header=None, skiprows=skiprows, engine="python")
-    # Coerce anything non-numeric to NaN
-    df = df.apply(pd.to_numeric, errors="coerce")
-    # Keep only numeric columns
-    num = df.select_dtypes(include=[np.number])
-    if num.shape[1] < ncols:
-        raise ValueError(f"Found only {num.shape[1]} numeric columns in {path}, need {ncols}.")
-    # Most residual files have iteration/index columns first; residuals are usually the last 4 numeric cols
-    resid = num.iloc[:, -ncols:].to_numpy()
-    return resid
-
-
-
-# Root directory to import mcfd_tec.bin files # 
-rootDir = Path(r"C:\Users\hhsabbah\Documents\01_Bladeless_Proj\32_Geometry Code\Results\Mach Study 2") # this is the root directory to the parametric study solution files
-subDirs1 = [p for p in rootDir.iterdir() if p.is_dir()]
-fileName = "mcfd.rhsgi"
-subDirs2_rhsgi = [p for d in subDirs1 for p in d.iterdir() if p.is_dir()]  # flattened
-file_paths_rhsgi = [p / fileName for p in subDirs2_rhsgi]
-
-
-# Residuals labels # 
-Resid_labels = ["energy", "mass", "x-momentum", "y-momentum"]
-
-for file_path_rhsgi in file_paths_rhsgi:
-    try: 
-        resid = load_residuals(file_path_rhsgi.as_posix(), skiprows=3, ncols=4)
-    
-        # Normalize each column by its first entry (avoid divide-by-zero)
-        denom = resid[0, :].copy()
-        denom[denom == 0] = 1.0
-        resid = resid / denom
-    
-        iterations = np.arange(1, resid.shape[0] + 1)
-    
-        plt.figure(figsize=(8, 6))
-        for j in range(resid.shape[1]):
-            plt.semilogy(iterations, resid[:, j], linewidth=2)
-        plt.title(f"Residuals Vs Iterations: {file_path_rhsgi.parent.name}", fontsize=24)
-        plt.legend(Resid_labels)
-        plt.xlabel("Iterations")
-        plt.ylabel("Residuals")
-        plt.grid(True, which="both")
-        plt.tick_params(axis='both', which='major', labelsize=18)
-        plt.show()
-    except: 
-        print(f"Couldn't Find rhsgi file for {file_path_rhsgi.parent.name}\n")
-
-
-
-residMAX = max(resid[-1])
-print(f"Maximum residual: {residMAX:.2e} \n")
+residual_plotter()
 
 
 
 
     
 #%% 
-"""
-#------------------------------------------------------------------------------------------------------------------------------------#
-     Getting all residuals and all convergence criterions(net mass flow) to be able to see if the simuilations converged properly
-#------------------------------------------------------------------------------------------------------------------------------------#
-""" 
-
-
-# Root directory to import mcfd_tec.bin files # 
-rootDir_flux = Path(r"C:\Users\hhsabbah\Documents\01_Bladeless_Proj\21_ANSYS Workflow Automation\8_Mach_Sweep_Study_2(Solution)\4_Mach_Reruns") # this is the root directory to the parametric study solution files
-subDirs1_flux = [p for p in rootDir_flux.iterdir() if p.is_dir()]
-fileName_flux= "minfo1_e1"
-
-
-
-subDirs2_flux = [p for d in subDirs1_flux for p in d.iterdir() if p.is_dir()]  # flattened
-file_paths_flux = [p / fileName_flux for p in subDirs2_flux]
 
 
 
 
 
 
-
-## Load data ## 
-mass_flux_end = {}
-
-for file_path_flux in file_paths_flux:
-    df = pd.read_csv(file_path_flux, sep=r"\s+", comment="#")
-    df.rename(columns = {"mass_flux":"misc","infout1":"iterations","d":"mass_flux"},inplace = True)
-    
-    plt.figure(figsize=(8, 6))
-    plt.plot(df["iterations"][:-3],df["mass_flux"][:-3])
-    
-    plt.ticklabel_format(axis = 'y', style = 'sci', scilimits = (0,1))
-    
-    plt.xlabel("Iterations")
-    plt.ylabel("Net Mass Flux")
-    plt.title(f"Net Mass Flux Vs Iterations: {file_path_flux.parent.name}")
-    plt.grid(True,which = "both")
-    plt.tick_params(axis='both', which='major', labelsize=18)
-
-    # Creating a dictonary for the different mass flux # 
-    mass_flux_end[file_path_flux.parent.name] = df["mass_flux"][:-3].iloc[-1]
-
-plt.show()
-
-
-
-mass_fluxMAX_key = max(mass_flux_end, key = mass_flux_end.get)
-mass_fluxMAX_val = mass_flux_end[mass_fluxMAX_key]
-print(f"Highest last iteration mass flux: {mass_fluxMAX_val:.2e} at {mass_fluxMAX_key}\n")
-
-massFluxCriterion = 0.8
-
-# Defining Color for more clear print # 
-RED = '\033[31m'
-RESET = '\033[0m'
-
-
-for key,value in mass_flux_end.items():
-    if value > massFluxCriterion:
-        diff = value - massFluxCriterion
-        if  diff > 1.0:
-            print(f"{key} does not meet criteria(net mass flux < 0.8). Off by {RED}{diff:.1f}{RESET} and net mass flux is {RED}{value}{RESET}\n")
-        else: 
-            print(f"{key} does not meet criteria(net mass flux < 0.8). Off by {diff:.1f} and net mass flux is {value}\n")
-            
-            
-            #%%
-
-#### ------ Creating a set for h_l of 0.02 only and seeing how the percentage difference changes with various h_l ----- ####
-
-# Getting values for h_l 0.02 for mass flux percentage #
-rootDir_info_inlet = Path(r"C:\Users\hhsabbah\Documents\01_Bladeless_Proj\32_Geometry Code\Results\Mach Study 2\h_l_0.02")
-subDirs_info_inlet  = [p for p in rootDir_info.iterdir() if p.is_dir()]
-fileName_flux_inlet = "minfo1_e3"
-file_paths_info = [p / fileName_flux_inlet for p in subDirs_info]
-
-subDirs_info_totFlux = [p for p in rootDir_info.iterdir() if p.is_dir()]
-fileName_totFlux = "minfo1_e1"
-file_paths_totFLux = [p / fileName_totFlux for p in subDirs_info_totFlux]
-
-
-# Plotting results for h_l 0.02 # 
-# Rebuild file lists from your subdir lists (fixing the earlier variable typo)
-file_paths_inlet = [(p / fileName_flux_inlet) for p in subDirs_info_inlet]
-file_paths_total = [(p / fileName_totFlux)    for p in subDirs_info_totFlux]
-
-def read_minfo_flexible(path: Path):
-    """
-    Flexible reader for minfo1_* files.
-    - Skips comment/blank lines.
-    - On each data line, parses *numeric* tokens only.
-    - If >=3 numbers: first is 'iter', last is 'val'.
-      If exactly 2 numbers: treat last as 'val' and auto-iterate (1,2,3,...).
-    Returns arrays (iter, val) as float.
-    """
-    iters, vals = [], []
-    auto_i = 0
-    try:
-        with open(path, "r", errors="ignore") as f:
-            for line in f:
-                s = line.strip()
-                if not s or s.startswith("#"):
-                    continue
-                nums = []
-                for tok in s.replace(",", " ").split():
-                    try:
-                        nums.append(float(tok))
-                    except ValueError:
-                        continue
-                if len(nums) >= 3:
-                    iters.append(nums[0])
-                    vals.append(nums[-1])
-                elif len(nums) == 2:
-                    auto_i += 1
-                    iters.append(float(auto_i))
-                    vals.append(nums[-1])
-                else:
-                    continue
-    except FileNotFoundError:
-        return np.array([]), np.array([])
-    iters = np.asarray(iters, dtype=float)
-    vals  = np.asarray(vals,  dtype=float)
-
-    # sort by iteration, drop duplicate iters (keep last occurrence)
-    if iters.size:
-        order = np.argsort(iters)
-        iters, vals = iters[order], vals[order]
-        # remove duplicates
-        uniq, idx = np.unique(iters, return_index=True)
-        iters, vals = iters[idx], vals[idx]
-    return iters, vals
-
-# Map case folder -> file path for e1 (net) and e3 (inlet)
-total_by_case = {p.parent.name: p for p in file_paths_total if p.exists()}
-inlet_by_case = {p.parent.name: p for p in file_paths_inlet if p.exists()}
-
-common_cases = sorted(set(total_by_case) & set(inlet_by_case))
-if not common_cases:
-    print("No case has BOTH minfo1_e1 and minfo1_e3 under rootDir_info.")
-else:
-    fig, ax = plt.subplots(figsize=(10, 6))
-    cmap = cm.get_cmap("viridis", len(common_cases))
-    plotted = 0
-
-    for i, case in enumerate(common_cases):
-        p_e1 = total_by_case[case]   # minfo1_e1 (net)
-        p_e3 = inlet_by_case[case]   # minfo1_e3 (inlet)
-
-        it_e1, v_e1 = read_minfo_flexible(p_e1)
-        it_e3, v_e3 = read_minfo_flexible(p_e3)
-
-        if it_e1.size == 0 or it_e3.size == 0:
-            print(f"Skipping {case}: empty data (e1:{it_e1.size}, e3:{it_e3.size})")
-            continue
-
-        # Align by iteration (inner join)
-        # Build dicts for fast lookup then intersect keys
-        d_e1 = dict(zip(it_e1, v_e1))
-        d_e3 = dict(zip(it_e3, v_e3))
-        it_common = np.array(sorted(set(d_e1.keys()) & set(d_e3.keys())), dtype=float)
-        if it_common.size == 0:
-            print(f"Skipping {case}: no overlapping iterations")
-            continue
-
-        net   = np.array([d_e1[it] for it in it_common], dtype=float)
-        inlet = np.array([d_e3[it] for it in it_common], dtype=float)
-
-        mask = np.isfinite(net) & np.isfinite(inlet) & (np.abs(inlet) > 0)
-        if not np.any(mask):
-            print(f"Skipping {case}: all denom invalid/zero")
-            continue
-
-        it_plot = it_common[mask]
-        pct     = 100.0 * np.abs(net[mask]) / np.abs(inlet[mask])
-
-        ax.plot(it_plot, pct, lw=2, color=cmap(i), label=case)
-        plotted += 1
-
-    ax.set_title("Mass-flux Imbalance vs Iterations")
-    ax.set_xlabel("Iterations")
-    ax.set_ylabel(r"Imbalance [%]  =  $|\dot m_{\rm total}| / |\dot m_{\rm inlet}| \times 100$")
-    ax.grid(True, which="both", alpha=0.35)
-    if plotted:
-        ax.legend(title="Cases", loc="center left", bbox_to_anchor=(1.02, 0.5))
-    else:
-        print("No curves plotted — check the messages above for which cases were skipped.")
-    fig.tight_layout()
-    plt.show()
-
-# ==== Print last-iteration imbalance % for each case ====
-print("\n=== Last-iteration mass-flux imbalance (|e1|/|e3| * 100) ===")
-
-results = []
-for case in common_cases:
-    p_e1 = total_by_case[case]   # minfo1_e1 (net/total)
-    p_e3 = inlet_by_case[case]   # minfo1_e3 (inlet)
-
-    it_e1, v_e1 = read_minfo_flexible(p_e1)
-    it_e3, v_e3 = read_minfo_flexible(p_e3)
-    if it_e1.size == 0 or it_e3.size == 0:
-        print(f"Skipping {case}: empty data")
-        continue
-
-    # align by iteration (inner join via dicts)
-    d1 = dict(zip(it_e1, v_e1))
-    d3 = dict(zip(it_e3, v_e3))
-    it_common = np.array(sorted(set(d1) & set(d3)), dtype=float)
-    if it_common.size == 0:
-        print(f"Skipping {case}: no overlapping iterations")
-        continue
-
-    net   = np.array([d1[it] for it in it_common], dtype=float)
-    inlet = np.array([d3[it] for it in it_common], dtype=float)
-    mask  = np.isfinite(net) & np.isfinite(inlet) & (np.abs(inlet) > 0)
-
-    if not np.any(mask):
-        print(f"Skipping {case}: no valid ratio (zero/NaN inlet)")
-        continue
-
-    # last valid sample (highest iteration with a valid ratio)
-    last_idx = np.where(mask)[0][-1]
-    last_it  = it_common[last_idx]
-    last_pct = 100.0 * np.abs(net[last_idx]) / np.abs(inlet[last_idx])
-
-    results.append((case, last_it, last_pct))
-
-# pretty print (sorted by case name; change key to sort by % if you prefer)
-for case, last_it, last_pct in sorted(results, key=lambda t: t[0]):
-    it_disp = int(round(last_it)) if abs(last_it - round(last_it)) < 1e-6 else last_it
-    print(f"{case:35s}  iter {it_disp:>7}  ->  {last_pct:8.3f}%")
-
-# (optional) save to CSV
-import pandas as pd
-pd.DataFrame(results, columns=["case","last_iter","last_pct"]).to_csv("mass_flux_imbalance_last.csv", index=False)
 
     
 #%%
@@ -1003,229 +342,6 @@ pd.DataFrame(results, columns=["case","last_iter","last_pct"]).to_csv("mass_flux
 #------------------------------------------------------------------------------------------------------------------------------------#
 """ 
 
-"""
-Optimized Boundary Layer Analysis
-Key optimizations explained inline
-"""
-import numpy as np
-import tecplot as tp
-from tecplot.constant import PlotType
-import time 
-from pathlib import Path
-
-# ============================================================================
-# OPTIMIZATION 1: Move functions outside loop (avoid re-definition overhead)
-# ============================================================================
-def find_bl_edge_curvature(y, dy_dx, curvature_threshold=0.0001):
-    """Find where second derivative (curvature) indicates settling."""
-    d2y_dx2 = np.gradient(dy_dx, y)
-    peak_idx = np.argmax(dy_dx)
-    
-    max_curvature = np.max(np.abs(d2y_dx2[peak_idx:]))
-    if max_curvature == 0:
-        return y[-1], len(y) - 1
-        
-    normalized_curvature = np.abs(d2y_dx2[peak_idx:]) / max_curvature
-    settled = normalized_curvature < curvature_threshold
-    
-    if np.any(settled):
-        window = 5
-        for i in range(len(settled) - window):
-            if np.all(settled[i:i+window]):
-                bl_idx = peak_idx + i
-                return y[bl_idx], bl_idx
-    
-    return y[-1], len(y) - 1
-
-
-### Defining the file path directory ###
-base_dir = Path(r"C:\Users\hhsabbah\Documents\01_Bladeless_Proj\21_ANSYS Workflow Automation\7_Parametric Study\1_DeltaPstag Simulations")
-rootDir = base_dir # this is the root directory to the parametric study solution files
-subDirs1 = [p for p in rootDir.iterdir() if p.is_dir()]
-
-fileName = "mcfd_tec.bin"
-subDirs2 = [p for d in subDirs1 for p in d.iterdir() if p.is_dir()]  # flattened
-file_paths = [p / fileName for p in subDirs2]
-
-
-
-
-# ============================================================================
-# OPTIMIZATION 2: Pre-compute constants once
-# ============================================================================
-IN_TO_MM = 25.4
-MM_TO_M = 1e-3
-BL_H_MM = 3.0
-BL_H_IN = BL_H_MM * 0.0393701
-
-start = time.time()
-
-
-# Pre-allocated dictionaries
-delta_n_mm_3_dict = {}
-tau_w_dict = {}
-
-# Tunables
-DEBUG_PLOTS = False
-stride = 1  # OPTIMIZATION TIP: Increase to 2-4 for faster testing
-num_points = 800  # OPTIMIZATION TIP: Lower to 100-150 if acceptable
-
-# ============================================================================
-# Connect to Tecplot ONCE
-# ============================================================================
-try:
-    tp.session.connect()
-except Exception:
-    pass
-
-# ============================================================================
-# OPTIMIZATION 3: Process in batches or parallel (pseudo-code structure)
-# ============================================================================
-# For true speedup, consider using concurrent.futures:
-# from concurrent.futures import ProcessPoolExecutor
-# with ProcessPoolExecutor(max_workers=4) as executor:
-#     results = executor.map(process_case, cases)
-
-# ============================================================================
-# Main processing loop
-# ============================================================================
-for idx, key in enumerate(ds_by_case):
-    if idx == 0: 
-        print(f"{'='*40}\n{key}\n{'='*40}")
-    
-    print(f"Processing iteration {idx}...")
-    
-    # Load layout once per case
-    tp.new_layout()
-    tp.data.load_tecplot(file_paths[idx].as_posix())
-    fr = tp.active_frame()
-    fr.plot_type = PlotType.Cartesian2D
-
-    # ========================================================================
-    # OPTIMIZATION 4: Vectorize geometry processing
-    # ========================================================================
-    x0 = ds_by_case[key]["X"].data.astype(float).ravel()
-    y0 = ds_by_case[key]["Y"].data.astype(float).ravel()
-    
-    # Filter bad values once
-    good = np.isfinite(x0) & np.isfinite(y0)
-    x0, y0 = x0[good], y0[good]
-
-    # Reference values (computed once)
-    P_ref = float(ds_by_case_inlet[key]["P"].data.ravel()[0])
-    rho_ref = float(ds_by_case_inlet[key]["R"].data.ravel()[0])
-    U_ref = float(ds_by_case_inlet[key]["U"].data.ravel()[0])
-    V_ref = float(ds_by_case_inlet[key]["V"].data.ravel()[0])
-    h0_ref = float(ds_by_case_inlet[key]["Enthalpy_total"].data.ravel()[0])
-
-    # ========================================================================
-    # OPTIMIZATION 5: Vectorized normal calculations
-    # ========================================================================
-    dx_ds = np.gradient(x0)
-    dy_ds = np.gradient(y0)
-    nx, ny = -dy_ds, dx_ds
-    norm = np.hypot(nx, ny)
-    
-    # Avoid division by zero efficiently
-    norm = np.where(norm < 1e-12, np.nan, norm)
-    ux, uy = nx / norm, ny / norm
-
-    # Rake endpoints (apply stride here)
-    xf = x0 + BL_H_IN * ux
-    yf = y0 + BL_H_IN * uy
-    ok = np.isfinite(xf) & np.isfinite(yf)
-    
-    # Apply stride to reduce number of profiles
-    x_start = x0[ok][::stride]
-    y_start = y0[ok][::stride]
-    x_end = xf[ok][::stride]
-    y_end = yf[ok][::stride]
-
-    # Build arrays efficiently
-    n = min(len(x_start), len(y_start), len(x_end), len(y_end))
-    x_pairs = np.column_stack((x_start[:n], x_end[:n]))
-    y_pairs = np.column_stack((y_start[:n], y_end[:n]))
-
-    # Pre-allocate output arrays
-    N = x_pairs.shape[0]
-    delta_n_mm_3_dict[key] = np.full(N, np.nan, dtype=float)
-    tau_w_dict[key] = np.full(N, np.nan, dtype=float)
-
-    # ========================================================================
-    # OPTIMIZATION 6: Use suspend() to avoid UI redraws (you already have this!)
-    # ========================================================================
-    with tp.session.suspend():
-        for i in range(N):
-            # Convert to tuple once
-            p0 = (float(x_pairs[i, 0]), float(y_pairs[i, 0]), 0.0)
-            p1 = (float(x_pairs[i, 1]), float(y_pairs[i, 1]), 0.0)
-            
-            # Extract line
-            line = tp.data.extract.extract_line([p0, p1], num_points=num_points)
-            
-            # Check wall shear stress
-            tau_x_wall = line.values("Tau_x").as_numpy_array()[0]
-            
-            if tau_x_wall <= 0:
-                print(f"  Point {i} skipped (separation)")
-                continue
-            
-            # ================================================================
-            # OPTIMIZATION 7: Extract all needed variables at once
-            # ================================================================
-            # This is already efficient, but ensure you're not calling .values() multiple times
-            x_BL = line.values("X").as_numpy_array()
-            y_BL = line.values("Y").as_numpy_array()
-            U = line.values("U").as_numpy_array()
-            V = line.values("V").as_numpy_array()
-            P = line.values("P").as_numpy_array()
-            Gam = line.values("Gamma").as_numpy_array()
-            vort_z = line.values("Vort_z").as_numpy_array()
-            Mutur = line.values("Mutur").as_numpy_array()
-            Mut_ovr_Mu = line.values("Mut_ovr_Mu").as_numpy_array()
-            
-            # Compute mu efficiently (avoid division by zero)
-            mu = np.where(Mut_ovr_Mu != 0, Mutur / Mut_ovr_Mu, Mutur)
-            
-            # Store wall shear stress
-            tau_w_dict[key][i] = tau_x_wall
-
-            # ================================================================
-            # OPTIMIZATION 8: Ensure correct array order once
-            # ================================================================
-            if y_BL[0] > y_BL[-1]:
-                # Reverse all arrays at once
-                y_BL = y_BL[::-1]
-                U = U[::-1]
-                V = V[::-1]
-                vort_z = vort_z[::-1]
-            
-            y_wall0 = y_BL[0]
-            y_corr = y_BL - y_wall0
-            
-            # ================================================================
-            # OPTIMIZATION 9: Compute derivatives efficiently
-            # ================================================================
-            domega_dy = np.gradient(vort_z, y_corr)
-            y_edge_3, y_edge_idx_3 = find_bl_edge_curvature(y_corr, domega_dy)
-            
-            # Store result
-            delta_n_mm_3_dict[key][i] = float(y_edge_3) * IN_TO_MM
-        
-        # Summary after processing all profiles
-        valid = np.isfinite(delta_n_mm_3_dict[key])
-        if np.any(valid):
-            delta_valid = delta_n_mm_3_dict[key][valid]
-            print(f"{key}: N={N}, δ(mm) ∈ [{np.min(delta_valid):.3f}, {np.max(delta_valid):.3f}]")
-
-# ============================================================================
-# Report timing
-# ============================================================================
-end = time.time()
-elapsed = end - start
-print(f"\n{'='*50}")
-print(f"Total elapsed time: {elapsed:.2f} seconds ({elapsed/3600:.2f} hours)")
-print(f"{'='*50}")
 
 
 
