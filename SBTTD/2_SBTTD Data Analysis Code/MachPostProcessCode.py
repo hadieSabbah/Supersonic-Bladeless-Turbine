@@ -567,7 +567,7 @@ import matplotlib.pyplot as plt
 
 
 
-
+########### NEEEDS WORK ######################
 
 
     
@@ -4295,132 +4295,9 @@ for k, h_l in enumerate(h_l_values):
         
         wall_x_sources = get_wall_critical_points(l, n)
         wall_y_sources = y_wall_func(wall_x_sources)
-        
-        # ================================================================
-        # SECTION 3: VISUALIZATION
-        # ================================================================
-        
+    
 
-        '''
-        # ====== PLOT 1: PRESSURE COEFFICIENT (Cp) ====== #
-        fig_height = 8
-        fig_width = 8 
-        
-        plt.figure(figsize=(fig_height, fig_width))
-        
-        contour = plt.contourf(X_grid, Y_grid, Cp_masked, levels=40, cmap='RdBu_r')
-        cbar = plt.colorbar(contour, label='Cp(x, y)', pad=0.02)
-        
-        # Wall
-        plt.fill_between(x_wave, y_min, y_wave, color='gray', alpha=0.8, label='Wall', zorder=5)
-        plt.plot(x_wave, y_wave, 'k-', linewidth=2, zorder=6)
-        plt.axhline(y=0, color='black', linestyle='--', linewidth=1, alpha=0.5, label='y=0')
-        
-        # Characteristics
-        wall_colors = plt.cm.plasma((wall_y_sources - wall_y_sources.min()) / 
-                                     (wall_y_sources.max() - wall_y_sources.min()))
-        
-        for i, x_wall in enumerate(wall_x_sources):
-            y_wall_val = y_wall_func(x_wall)
-            y_char = np.linspace(y_wall_val, y_max, 100)
-            x_char = x_wall + np.sqrt(B) * (y_char - y_wall_val)
-            valid = (x_char >= x_min) & (x_char <= x_max)
-            
-            if np.any(valid):
-                plt.plot(x_char[valid], y_char[valid], color=wall_colors[i], 
-                        alpha=0.5, linewidth=1.0, zorder=3)
-        
-        plt.scatter(wall_x_sources, wall_y_sources, c=wall_y_sources, cmap='plasma', 
-                   s=30, edgecolors='white', linewidth=1, zorder=7, label='Sources')
-        
-        plt.xlabel('X', fontsize=18)
-        plt.ylabel('Y', fontsize=18)
-        plt.title('Pressure Coefficient Cp(x, y)', fontsize=21, fontweight='bold')
-        plt.legend(fontsize=14, loc='upper right')
-        plt.grid(True, alpha=0.2)
-        plt.xlim(x_min, x_max)
-        plt.ylim(y_min, y_max)
-        plt.tight_layout()
-        plt.savefig('cp_contour.png', dpi=300, bbox_inches='tight')
-        plt.show()
-        
-        # ====== PLOT 2: PRESSURE (P) ====== #
-        
-        plt.figure(figsize=(fig_height, fig_width))
-        
-        contour = plt.contourf(X_grid, Y_grid, P_masked, levels=40, cmap='coolwarm')
-        cbar = plt.colorbar(contour, label='P(x, y) [Pa]', pad=0.02)
-        
-        plt.fill_between(x_wave, y_min, y_wave, color='gray', alpha=0.8, label='Wall', zorder=5)
-        plt.plot(x_wave, y_wave, 'k-', linewidth=2, zorder=6)
-        plt.axhline(y=0, color='black', linestyle='--', linewidth=1, alpha=0.5, label='y=0')
-        
-        for i, x_wall in enumerate(wall_x_sources):
-            y_wall_val = y_wall_func(x_wall)
-            y_char = np.linspace(y_wall_val, y_max, 100)
-            x_char = x_wall + np.sqrt(B) * (y_char - y_wall_val)
-            valid = (x_char >= x_min) & (x_char <= x_max)
-            
-            if np.any(valid):
-                plt.plot(x_char[valid], y_char[valid], color=wall_colors[i], 
-                        alpha=0.5, linewidth=1.0, zorder=3)
-        
-        plt.scatter(wall_x_sources, wall_y_sources, c=wall_y_sources, cmap='plasma', 
-                   s=30, edgecolors='white', linewidth=1, zorder=7, label='Sources')
-        
-        plt.xlabel('X', fontsize=18)
-        plt.ylabel('Y', fontsize=18)
-        plt.title('Pressure P(x, y)', fontsize=21, fontweight='bold')
-        plt.legend(fontsize=14, loc='upper right')
-        plt.grid(True, alpha=0.2)
-        plt.xlim(x_min, x_max)
-        plt.ylim(y_min, y_max)
-        plt.tight_layout()
-        plt.savefig('pressure_contour.png', dpi=300, bbox_inches='tight')
-        plt.show()
-        
-        # ====== PLOT 3: MACH NUMBER (M) ====== #
-        
-        plt.figure(figsize=(fig_height, fig_width))
-        
-        contour = plt.contourf(X_grid, Y_grid, M_masked, levels=40, cmap='jet')
-        cbar = plt.colorbar(contour, label='M(x, y)', pad=0.02)
-        
-        plt.fill_between(x_wave, y_min, y_wave, color='gray', alpha=0.8, label='Wall', zorder=5)
-        plt.plot(x_wave, y_wave, 'k-', linewidth=2, zorder=6)
-        plt.axhline(y=0, color='black', linestyle='--', linewidth=1, alpha=0.5, label='y=0')
-        
-        for i, x_wall in enumerate(wall_x_sources):
-            y_wall_val = y_wall_func(x_wall)
-            y_char = np.linspace(y_wall_val, y_max, 100)
-            x_char = x_wall + np.sqrt(B) * (y_char - y_wall_val)
-            valid = (x_char >= x_min) & (x_char <= x_max)
-            
-            if np.any(valid):
-                plt.plot(x_char[valid], y_char[valid], color='white', 
-                        alpha=0.3, linewidth=0.8, zorder=3)
-        
-        plt.xlabel('X', fontsize=18)
-        plt.ylabel('Y', fontsize=18)
-        plt.title('Mach Number M(x, y)', fontsize=21, fontweight='bold')
-        plt.legend(fontsize=14, loc='upper right')
-        plt.grid(True, alpha=0.2)
-        plt.xlim(x_min, x_max)
-        plt.ylim(y_min, y_max)
-        plt.tight_layout()
-        plt.savefig('mach_contour.png', dpi=300, bbox_inches='tight')
-        plt.show()
-        
-        print("\n" + "="*70)
-        print("COMPLETE! THREE CONTOUR PLOTS GENERATED")
-        print("="*70)
-        print("Files saved:")
-        print("  1. cp_contour.png - Pressure Coefficient")
-        print("  2. pressure_contour.png - Absolute Pressure")
-        print("  3. mach_contour.png - Mach Number Distribution")
-        print("="*70)
-        '''
-        
+
     
         """
         #------------------------------------------------------------------------------------------------------------------------------------#
