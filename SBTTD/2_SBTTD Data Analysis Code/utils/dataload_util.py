@@ -194,7 +194,7 @@ import shutil
 from datetime import date
 
 
-def runSaver(ds_by_case, ds_by_case_quad, ds_by_case_inlet, base_dir_dic = Path(r"C:\Users\hhsabbah\Documents\01_Bladeless_Proj\32_Geometry Code\Python Results\Mach Study")):
+def runSaver(ds_by_case, ds_by_case_quad, ds_by_case_inlet, base_dir_dic = Path(r"C:\Users\hhsabbah\Documents\01_Bladeless_Proj\32_Geometry Code\Python Results\Mach StudyC:\Users\hhsabbah\Documents\01_Bladeless_Proj\35_Git\Supersonic-Bladeless-Turbine\SBTTD\data\processed\Mach Study")):
 
     
     # Getting today's date in MM_DD_YYYY format
@@ -297,9 +297,55 @@ def runLoader(load_dir_dic = r"C:\Users\hhsabbah\Documents\01_Bladeless_Proj\35_
         ds_by_case_quad = pickle.load(f)
     with open(rf"{latest_date_dir}\ds_by_case_inlet.pkl", "rb") as f:
         ds_by_case_inlet = pickle.load(f)
-    with open(rf"{latest_date_dir}\index_by_case.pkl", "rb") as f:
-        index_by_case = pickle.load(f)
         return ds_by_case, ds_by_case_quad, ds_by_case_inlet
+
+
+
+
+#%% Loads residuals 
+
+from pathlib import Path
+import matplotlib.pyplot as plt
+import matplotlib.cm as cm
+
+
+# ---------------- your directory setup ----------------
+
+
+def file_pathFinder(fileName_info , rootDir_info = Path(r"C:\Users\hhsabbah\Documents\01_Bladeless_Proj\21_ANSYS Workflow Automation\8_Mach_Sweep_Study_2(Solution)\4_Mach_Reruns")):
+
+    subDirs_info  = [p for p in rootDir_info.iterdir() if p.is_dir()]
+    file_paths_info = [p / fileName_info for p in subDirs_info]
+    return file_paths_info
+
+# ---------------- parser for mcfd info files ----------------
+def load_minfo_step_force(path, use="step"):
+    """
+    Read a 'minfo1_e2' (mcfd.info-like) file and return x (step or time) and x_force arrays.
+    Lines starting with '#' are ignored. Data rows are: Step  Time  X-force
+    """
+    xs, fs = [], []
+    try:
+        with open(path, "r", errors="ignore") as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                parts = line.split()
+                if len(parts) < 3:
+                    continue
+                # rows look like: 1  0.0000000e+000  2.1942451e+005
+                try:
+                    step = float(parts[0])
+                    time = float(parts[1])
+                    x_force = float(parts[2])
+                except ValueError:
+                    continue
+                xs.append(step if use == "step" else time)
+                fs.append(x_force)
+    except FileNotFoundError:
+        return np.array([]), np.array([])
+    return np.asarray(xs), np.asarray(fs)
 
 
 

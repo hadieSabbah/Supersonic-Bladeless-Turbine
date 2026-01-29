@@ -13,9 +13,9 @@ import tecplot as tp
 
 """
 from utils.parameterComputation import variableImporterMasked, ReCompute, yplusThreshold
-from utils.dataload_util import assign_dir, bigImport, runSaver, runLoader
-from utils.plotting import plotter, plotter_multi_all, plotter_multiPerCase, subplotter, residual_plotter
-
+from utils.dataload_util import assign_dir, bigImport, runSaver, runLoader, file_pathFinder, load_minfo_step_force
+from utils.plotting import plotter, plotter_multi_all, plotter_multiPerCase, subplotter
+from utils.models import analyze_geometries, get_first_shock_pressures, offsetGeomPoints
 
 #%%
 ### Connecting to the session # 
@@ -35,7 +35,7 @@ ds_by_case, ds_by_case_quad, ds_by_case_inlet = bigImport(base_dir,fileName)
 
 #%% Importing processed data ###
 
-ds_by_case,ds_by_quad, ds_by_inlet = runLoader() 
+ds_by_case,ds_by_case_quad, ds_by_case_inlet = runLoader() 
 
 
 
@@ -84,12 +84,257 @@ omega_z_inlet, u_inlet, v_inlet, q_dot_inlet, mu_tur_inlet = \
     
     
     
-    
-    
-    
-    
-    
+#%% Testing code with Claude  ####
 
+
+import numpy as np
+import matplotlib.pyplot as plt
+
+
+def compute_boundary_layer_thickness(x_quad, y_quad, omega_z_quad, rho_quad,
+                                     x_wall, tau_x_wall,
+                                     x_min=0.0, x_max=0.1,
+                                     num_stations=100,
+                                     x_tolerance=0.001,
+                                     vorticity_threshold=100.0,
+                                     density_gradient_threshold=1000.0):
+    """
+    Compute boundary layer thickness based on vorticity criterion.
+    
+    Excludes:
+    - Locations where flow is separated (tau_x < 0)
+    - Locations where shocks are present (large density gradient)
+    
+    Parameters:
+    -----------
+    x_quad, y_quad, omega_z_quad, rho_quad : dict
+        Quadrant (full domain) data
+    x_wall, tau_x_wall : dict
+        Wall data (x-locations and wall shear stress)
+    x_min, x_max : float
+        Range of x to analyze
+    num_stations : int
+        Number of x-stations to evaluate
+    x_tolerance : float
+        Tolerance for finding points near x-station
+    vorticity_threshold : float
+        Absolute vorticity threshold for BL edge
+    density_gradient_threshold : float
+        If |d(rho)/dy| exceeds this, consider it a shock
+        
+    Returns:
+    --------
+    delta : dict
+        Boundary layer thickness (NaN where separated or shock)
+    x_stations : ndarray
+        x-locations where delta was computed
+    separation_mask : dict
+        Boolean array - True where flow is separated
+    shock_mask : dict
+        Boolean array - True where shock is detected
+    """
+    
+    # Define x-stations
+    x_stations = np.linspace(x_min, x_max, num_stations)
+    
+    # Output dictionaries
+    delta = {}
+    separation_mask = {}
+    shock_mask = {}
+    
+    # Loop through each case
+    for key in x_quad.keys():
+        
+        # Extract quad arrays
+        x_arr = x_quad[key]
+        y_arr = y_quad[key]
+        omega_arr = omega_z_quad[key]
+        rho_arr = rho_quad[key]
+        
+        # Extract wall arrays
+        x_w = x_wall[key]
+        tau_x_w = tau_x_wall[key]
+        
+        # Storage for this case
+        delta_values = np.zeros(num_stations)
+        is_separated = np.zeros(num_stations, dtype=bool)
+        is_shock = np.zeros(num_stations, dtype=bool)
+        
+        # Loop through each x-station
+        for i, x_loc in enumerate(x_stations):
+            
+            # ---------------------------
+            # Step 1: Check for separation
+            # ---------------------------
+            # Find closest wall point to this x-station
+            wall_idx = np.argmin(np.abs(x_w - x_loc))
+            tau_x_local = tau_x_w[wall_idx]
+            
+            if tau_x_local < 0:
+                # Flow is separated here
+                delta_values[i] = np.nan
+                is_separated[i] = True
+                continue
+            
+            # ---------------------------
+            # Step 2: Get points near x-station
+            # ---------------------------
+            mask = np.abs(x_arr - x_loc) < x_tolerance
+            
+            if np.sum(mask) < 5:
+                delta_values[i] = np.nan
+                continue
+            
+            # Sort by y
+            y_local = y_arr[mask]
+            omega_local = omega_arr[mask]
+            rho_local = rho_arr[mask]
+            
+            sort_idx = np.argsort(y_local)
+            y_sorted = y_local[sort_idx]
+            omega_sorted = omega_local[sort_idx]
+            rho_sorted = rho_local[sort_idx]
+            
+            # Wall location
+            y_wall_local = y_sorted[0]
+            
+            # ---------------------------
+            # Step 3: Check for shock
+            # ---------------------------
+            # Compute density gradient (d_rho/dy)
+            dy = np.diff(y_sorted)
+            d_rho = np.diff(rho_sorted)
+            
+            # Avoid division by zero
+            dy[dy == 0] = 1e-10
+            
+            rho_gradient = np.abs(d_rho / dy)
+            
+            if np.max(rho_gradient) > density_gradient_threshold:
+                # Shock detected at this x-station
+                delta_values[i] = np.nan
+                is_shock[i] = True
+                continue
+            
+            # ---------------------------
+            # Step 4: Find BL edge
+            # ---------------------------
+            abs_omega = np.abs(omega_sorted)
+            below_threshold = abs_omega < vorticity_threshold
+            
+            if not np.any(below_threshold):
+                y_edge = y_sorted[-1]
+            else:
+                edge_idx = np.argmax(below_threshold)
+                y_edge = y_sorted[edge_idx]
+            
+            # ---------------------------
+            # Step 5: Compute BL thickness
+            # ---------------------------
+            delta_values[i] = y_edge - y_wall_local
+        
+        # Store results
+        delta[key] = delta_values
+        separation_mask[key] = is_separated
+        shock_mask[key] = is_shock
+    
+    return delta, x_stations, separation_mask, shock_mask
+
+
+
+
+
+
+
+def plot_bl_edge_validation(x_quad, y_quad, omega_z_quad, rho_quad,
+                            x_wall, y_wall, tau_x_wall,
+                            x_min=0.0, x_max=0.1,
+                            num_stations=50,
+                            x_tolerance=0.001,
+                            vorticity_threshold=100.0,
+                            density_gradient_threshold=1000.0):
+    """
+    Plot boundary layer edge detection with separation and shock regions marked.
+    """
+    
+    # Compute BL thickness
+    delta, x_stations, separation_mask, shock_mask = compute_boundary_layer_thickness(
+        x_quad, y_quad, omega_z_quad, rho_quad,
+        x_wall, tau_x_wall,
+        x_min=x_min, x_max=x_max,
+        num_stations=num_stations,
+        x_tolerance=x_tolerance,
+        vorticity_threshold=vorticity_threshold,
+        density_gradient_threshold=density_gradient_threshold
+    )
+    
+    # Loop through each case
+    for key in x_quad.keys():
+        
+        # Get wall geometry
+        x_w = x_wall[key]
+        y_w = y_wall[key]
+        
+        # Get results for this case
+        delta_vals = delta[key]
+        is_sep = separation_mask[key]
+        is_shock = shock_mask[key]
+        
+        # Compute y_edge = y_wall + delta at each station
+        # First, get wall y at each x-station
+        y_wall_at_stations = np.zeros(len(x_stations))
+        for i, x_loc in enumerate(x_stations):
+            wall_idx = np.argmin(np.abs(x_w - x_loc))
+            y_wall_at_stations[i] = y_w[wall_idx]
+        
+        y_edge = y_wall_at_stations + delta_vals
+        
+        # Create figure
+        fig, ax = plt.subplots(figsize=(14, 5))
+        
+        # Plot wall geometry
+        ax.plot(x_w, y_w, 'k-', linewidth=2, label='Wall')
+        
+        # Plot valid BL edge points (not separated, not shock)
+        valid = ~is_sep & ~is_shock & ~np.isnan(delta_vals)
+        ax.plot(x_stations[valid], y_edge[valid], 'go', markersize=5, 
+                label='BL Edge (valid)')
+        
+        # Plot separation regions
+        if np.any(is_sep):
+            ax.axvspan(x_stations[is_sep].min(), x_stations[is_sep].max(),
+                       alpha=0.2, color='red', label='Separated region')
+            # Also mark individual points
+            ax.plot(x_stations[is_sep], y_wall_at_stations[is_sep], 'rx', 
+                    markersize=8, label='Separated points')
+        
+        # Plot shock regions
+        if np.any(is_shock):
+            ax.plot(x_stations[is_shock], y_wall_at_stations[is_shock], 'b^',
+                    markersize=8, label='Shock detected')
+        
+        # Formatting
+        ax.set_xlabel('x [m]')
+        ax.set_ylabel('y [m]')
+        ax.set_title(f'Boundary Layer Edge Detection - {key}\n'
+                     f'(ω threshold = {vorticity_threshold}, '
+                     f'dρ/dy threshold = {density_gradient_threshold})')
+        ax.legend(loc='upper left')
+        ax.set_xlim([x_min - 0.005, x_max + 0.005])
+        ax.grid(True, alpha=0.3)
+        ax.set_aspect('equal')
+        
+        plt.tight_layout()
+        plt.show()
+        
+        # Print summary
+        print(f"\n{key}:")
+        print(f"  Valid points:     {np.sum(valid)} / {num_stations}")
+        print(f"  Separated points: {np.sum(is_sep)}")
+        print(f"  Shock points:     {np.sum(is_shock)}")
+
+
+#%%
 #%%
 
 """
@@ -98,77 +343,74 @@ omega_z_inlet, u_inlet, v_inlet, q_dot_inlet, mu_tur_inlet = \
 #------------------------------------------------------------------------------------------------------------------------------------#
 
 """
-from pathlib import Path
-import numpy as np
-import matplotlib.pyplot as plt
-import matplotlib.cm as cm
 
 
-# ---------------- your directory setup ----------------
-rootDir_info = Path(r"C:\Users\hhsabbah\Documents\01_Bladeless_Proj\21_ANSYS Workflow Automation\8_Mach_Sweep_Study_2(Solution)\4_Mach_Reruns")
-subDirs_info  = [p for p in rootDir_info.iterdir() if p.is_dir()]
+
+# ---- Defining the file name and the root directory  ---- #
+rootDir_info = Path(r"C:\Users\hhsabbah\Documents\01_Bladeless_Proj\32_Geometry Code\Results\Mach Study 2")
 fileName_info = "minfo1_e2"
-file_paths_info = [p / fileName_info for p in subDirs_info]
 
 
 
-# ---------------- parser for mcfd info files ----------------
-def load_minfo_step_force(path, use="step"):
-    """
-    Read a 'minfo1_e2' (mcfd.info-like) file and return x (step or time) and x_force arrays.
-    Lines starting with '#' are ignored. Data rows are: Step  Time  X-force
-    """
-    xs, fs = [], []
-    try:
-        with open(path, "r", errors="ignore") as f:
-            for line in f:
-                line = line.strip()
-                if not line or line.startswith("#"):
-                    continue
-                parts = line.split()
-                if len(parts) < 3:
-                    continue
-                # rows look like: 1  0.0000000e+000  2.1942451e+005
-                try:
-                    step = float(parts[0])
-                    time = float(parts[1])
-                    x_force = float(parts[2])
-                except ValueError:
-                    continue
-                xs.append(step if use == "step" else time)
-                fs.append(x_force)
-    except FileNotFoundError:
-        return np.array([]), np.array([])
-    return np.asarray(xs), np.asarray(fs)
+file_paths_info = file_pathFinder(fileName_info , rootDir_info)
 
-# ---------------- plotting ----------------
-paths = [p for p in file_paths_info if p.exists()]
-if not paths:
-    print("No minfo1_e2 files found.")
-else:
-    fig, ax = plt.subplots(figsize=(8, 5))
-    colors = cm.get_cmap("viridis")(np.linspace(0, 1, len(paths)))
 
-    for color, p in zip(colors, paths):
-        x, f = load_minfo_step_force(p, use="step")  # use="time" to plot vs Time instead
-        if x.size == 0:
-            print(f"Skipping (no data): {p}")
-            continue
 
-        # label from the case folder name (parent directory)
-        label = p.parent.name
-        # sort by x in case rows are out of order
-        order = np.argsort(x)
-        ax.plot(x[order], f[order], lw=2, color=color, label=label)
+# For loop tos ave the residual variables # 
+for file_path in file_paths_info: 
+    x_resid_info, f_resid_info = load_minfo_step_force(file_path.as_posix(), use="step")  # use="time" to plot vs Time instead
+    if x_resid_info.size == 0:
+        print(f"Skipping (no data): {file_path} \n")
+        continue
+    
+    # Finding the lab from the folder name #
+    label = file_path.parent.name
+ 
 
-    ax.set_title(r"X-force vs Iterations",fontsize = 18)
-    ax.set_xlabel("Iterations",fontsize = 14)                 # change to "Time [s]" if use="time"
-    ax.set_ylabel("X-force", fontsize = 14)
-    ax.grid(True, which = "major", alpha = 0.3)
-    ax.grid(True,which ="minor", alpha = 0.3)
-    ax.legend(title="Cases", loc="center left", bbox_to_anchor=(1.02, 0.5))
-    fig.tight_layout()
-    plt.show()
+# Check density gradient magnitudes for one case
+key = 'h_l_0.06_Mach_3.5'
+
+x_arr = x_quad[key]
+y_arr = y_quad[key]
+rho_arr = rho_quad[key]
+
+# At one x-station
+x_loc = 0.05
+mask = np.abs(x_arr - x_loc) < 0.001
+
+y_local = y_arr[mask]
+rho_local = rho_arr[mask]
+
+sort_idx = np.argsort(y_local)
+y_sorted = y_local[sort_idx]
+rho_sorted = rho_local[sort_idx]
+
+dy = np.diff(y_sorted)
+d_rho = np.diff(rho_sorted)
+dy[dy == 0] = 1e-10
+
+rho_grad = np.abs(d_rho / dy)
+
+print(f"Max density gradient: {np.max(rho_grad):.2f}")
+print(f"Mean density gradient: {np.mean(rho_grad):.2f}")
+print(f"99th percentile: {np.percentile(rho_grad, 99):.2f}")
+
+
+#%%
+
+# Run validation
+plot_bl_edge_validation(
+    x_quad, y_quad, omega_z_quad, rho_quad,
+    x, y, tau_x,  # Wall data
+    x_min=0.0,
+    x_max=0.1,
+    num_stations=50,
+    x_tolerance=0.001,
+    vorticity_threshold=100.0,
+    density_gradient_threshold=1000.0  # Adjust based on your results
+)
+
+
 
 
 
@@ -203,7 +445,7 @@ for key in ds_by_case:
 """
 #------------------------------------------------------------------------------------------------------------------------------------#
                                                      Plotting Wall Shear stress
-#----------------------------------------'--------------------------------------------------------------------------------------------#
+#------------------------------------------------------------------------------------------------------------------------------------#
  
 """  
 
@@ -320,7 +562,7 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 
-residual_plotter()
+
 
 
 
@@ -337,23 +579,87 @@ residual_plotter()
 """ 
 
 
+import re
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
 
 
 
 
+temp_key = 'h_l_0.02_Mach_1.5'
+mask_thresh_temp = 0.006
+mask_thresh_temp_x = 0.01
+mask_thresh_tempMin_x = 0
+
+ 
+mask_temp_x =(x_quad[temp_key] > 0 ) & ( x_quad[temp_key] < mask_thresh_temp_x)
+mask_temp = y_quad[temp_key] < mask_thresh_temp
+mask_idx = np.where(mask_temp)[0]
 
 
 
+# Apply mask to BOTH arrays
+x_masked_temp = x_quad[temp_key][mask_temp]
+y_masked_temp = y_quad[temp_key][mask_temp]
+omega_z_masked_temp = omega_z_quad[temp_key][mask_idx]
 
 
 
+# Finding the index when vorticity becomes zero # 
+boolean_mask =  (0 < omega_z_masked_temp) & (omega_z_masked_temp < 45)
+zero_idx = np.where(boolean_mask)[0]
 
 
+print(zero_idx) 
+plt.scatter(x_masked_temp[zero_idx], y_masked_temp[zero_idx])
+plt.plot(x[temp_key],y[temp_key])
+plt.xlim([0,0.1])
+plt.grid()
+plt.show()
 
+#%%
+import numpy as np
+import matplotlib.pyplot as plt
 
+mask_thresh_temp = 0.006
 
-
-
+for key in x.keys():
+    # Mask and filter
+    mask_temp = y_quad[key] < mask_thresh_temp
+    mask_idx = np.where(mask_temp)[0]
+    
+    x_masked_temp = x_quad[key][mask_temp]
+    y_masked_temp = y_quad[key][mask_temp]
+    omega_z_masked_temp = omega_z_quad[key][mask_idx]
+    
+    boolean_mask = (0 < omega_z_masked_temp) & (omega_z_masked_temp < 100)
+    zero_idx = np.where(boolean_mask)[0]
+    
+    x_scatter = x_masked_temp[zero_idx]
+    y_scatter = y_masked_temp[zero_idx]
+    
+    # Bin and get minimum y per bin
+    n_bins = 100
+    x_bins = np.linspace(x_scatter.min(), x_scatter.max(), n_bins)
+    bin_idx = np.digitize(x_scatter, x_bins)
+    
+    lower_curve = {}
+    for i in np.unique(bin_idx):
+        mask = bin_idx == i
+        min_pos = np.argmin(y_scatter[mask])
+        lower_curve[i] = {'x': x_scatter[mask][min_pos], 'y': y_scatter[mask][min_pos]}
+    
+    x_lower = np.array([lower_curve[k]['x'] for k in sorted(lower_curve)])
+    y_lower = np.array([lower_curve[k]['y'] for k in sorted(lower_curve)])
+    
+    # Plot
+    plt.scatter(x_lower, y_lower, s=10, c='red')
+    plt.plot(x[key], y[key], 'k-')
+    plt.xlim([0, 0.1])
+    plt.title(key)
+    plt.grid()
+    plt.show()
 
 
 
@@ -977,11 +1283,6 @@ plt.show()
 
 
 
-
-
-
-
-#%%
 #%% Single h/L Geometry Analysis (by name pattern)
 from matplotlib import cm
 from matplotlib.colors import BoundaryNorm
@@ -2637,15 +2938,10 @@ for i, mach in enumerate(mach_numbers):
     
     # h_l_x data
     h_l_x_key = f"h_l_x_Mach_{mach}"
-    x_hlx = ds_by_case[h_l_x_key]["X"].data
-    p_hlx = ds_by_case[h_l_x_key]["P"].data
-    y_hlx = ds_by_case[h_l_x_key]["Y"].data
+    x_hlx = x[h_l_x_key]
+    p_hlx = P[h_l_x_key]
+    y_hlx = y[h_l_x_key]
     
-    # Filter to x from 0 to 0.09
-    mask = (x_hlx >= 0) & (x_hlx <= 0.09)
-    x_hlx = x_hlx[mask]
-    p_hlx = p_hlx[mask]
-    y_hlx = y_hlx[mask]
     
     x_hlx_norm = (x_hlx - x_hlx[0]) / (x_hlx[-1] - x_hlx[0])
     
@@ -2657,8 +2953,8 @@ for i, mach in enumerate(mach_numbers):
     for j, h_l in enumerate(h_l_values):
         h_l_key = f"h_l_{h_l}_Mach_{mach}"
         
-        x_hl = ds_by_case[h_l_key]["X"].data
-        p_hl = ds_by_case[h_l_key]["P"].data
+        x_hl = x[h_l_key]
+        p_hl = P[h_l_key]
         x_hl_norm = (x_hl - x_hl[0]) / (x_hl[-1] - x_hl[0])
         
         ax.plot(x_hl_norm, p_hl, color=colors[j], alpha=0.7, label=f'h/l = {h_l}')
@@ -2812,13 +3108,13 @@ def generate_axial_force_plot_dual_mach(df, output_path='axial_force_dual_plot_m
     # =========================================================================
     # Left plot: Force vs h/l (one line per Mach number)
     # =========================================================================
-    for i, mach in enumerate(mach_numbers):
+    for i, key in enumerate(ds_by_case):
         color = cmap_mach(i)
         print(pstatic_list[i])
         print(mach)
         y_vals = [pivot_hl.loc[h_l, mach] for h_l in h_l_values]
-        ax1.plot(h_l_values, y_vals / P_values[i], 'o-', color=color, linewidth=2, 
-                 markersize=8, label=f'M = {mach}') # Divide by y_values to be able to non-dim the solution CHANGE HERE 
+        ax1.plot(h_l_values, y_vals / first_shock_pressures[key], 'o-', color=color, linewidth=2, 
+                 markersize=8, label=f'M = {mach_numbers[i]}') # Divide by y_values to be able to non-dim the solution CHANGE HERE 
         
         # Optimal reference line
         #ax1.plot(0.05, tau_x_by_mach[mach], color=color, marker = 's', markersize = 10)
@@ -2909,6 +3205,363 @@ generate_axial_force_plot_dual_mach(
     title="Axial Force Trends",
     ylabel="Axial Force / Pstatic [m]"
 )
+
+#%% TEST WITH CLAUDE
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import matplotlib.cm as cm
+
+# =============================================================================
+# Helper function to create DataFrame from your dictionaries
+# =============================================================================
+def create_axial_force_dataframe(tau_x_dict, x_dict, mach_numbers=None, h_l_values=None):
+    """
+    Create a DataFrame from your dictionary structure for axial force analysis.
+    
+    Parameters
+    ----------
+    tau_x_dict : dict
+        Dictionary of tau_x arrays {case_name: tau_x_array}
+    x_dict : dict
+        Dictionary of x arrays {case_name: x_array}
+    mach_numbers : list, optional
+        List of Mach numbers to extract (if None, extracts all)
+    h_l_values : list, optional
+        List of h/l values to extract (if None, extracts all)
+        
+    Returns
+    -------
+    df : pandas DataFrame
+        DataFrame with columns: 'Mach', 'h/l', 'tau_h_l [N·m/m²]', 'tau_h_l_x [N·m/m²]', 'case_key'
+    """
+    import re
+    
+    data_rows = []
+    
+    # Get optimal tau_x (h/l = 0.05) for each Mach number
+    tau_x_optimal = {}
+    
+    for key in tau_x_dict.keys():
+        # Extract Mach and h/l from key
+        match_mach = re.search(r'(?:mach|M|Mach)_?([\d.]+)', key)
+        match_hl = re.search(r'h_l_([\d.]+)', key)
+        
+        if match_mach and match_hl:
+            mach = float(match_mach.group(1))
+            h_l = float(match_hl.group(1))
+            
+            # Calculate integrated axial force (trapezoidal integration)
+            # Use np.trapezoid for NumPy >= 2.0, or scipy alternative
+            try:
+                tau_integral = np.trapezoid(tau_x_dict[key], x_dict[key])
+            except AttributeError:
+                # Fallback for older NumPy versions
+                from scipy.integrate import trapezoid
+                tau_integral = trapezoid(tau_x_dict[key], x_dict[key])
+            
+            # Store optimal value (h/l = 0.05)
+            if abs(h_l - 0.05) < 1e-6:
+                tau_x_optimal[mach] = tau_integral
+            
+            data_rows.append({
+                'Mach': mach,
+                'h/l': h_l,
+                'tau_h_l [N·m/m²]': tau_integral,
+                'case_key': key  # Store the key for normalization lookup
+            })
+    
+    # Create DataFrame
+    df = pd.DataFrame(data_rows)
+    
+    # Add optimal column
+    df['tau_h_l_x [N·m/m²]'] = df['Mach'].map(tau_x_optimal)
+    
+    return df
+
+
+# =============================================================================
+# Plot generation function (Mach number version)
+# =============================================================================
+def generate_axial_force_plot_mach(df, output_path='axial_force_plot_mach.png', 
+                                    title=None, ylabel="Axial Force [N/m]", 
+                                    show_optimal=True, show_plot=True):
+    """
+    Generate a plot of axial force vs h/l for different Mach numbers.
+    
+    Parameters
+    ----------
+    df : pandas DataFrame
+        Must contain columns: 'Mach', 'h/l', 'tau_h_l_x [N·m/m²]', 'tau_h_l [N·m/m²]'
+    output_path : str
+        Path to save the output image
+    title : str, optional
+        Custom title for the plot
+    ylabel : str
+        Label for y-axis
+    show_optimal : bool
+        Whether to show the optimal h/l reference lines
+    show_plot : bool
+        Whether to display the plot in terminal (default: True)
+    
+    Returns
+    -------
+    None (saves image to output_path)
+    """
+    
+    # Extract unique values
+    mach_numbers = sorted(df['Mach'].unique())
+    h_l_values = sorted(df['h/l'].unique())
+    
+    # Get tau_h_l_x (optimal) values for each Mach number
+    tau_x_by_mach = df.groupby('Mach')['tau_h_l_x [N·m/m²]'].first().to_dict()
+    
+    # Pivot for easy plotting
+    pivot = df.pivot(index='h/l', columns='Mach', values='tau_h_l [N·m/m²]')
+    
+    # Create figure
+    fig, ax = plt.subplots(figsize=(12, 8))
+    
+    # Colormap for Mach lines
+    cmap = cm.get_cmap('viridis', len(mach_numbers))
+    
+    # Plot each Mach number as a separate line
+    for i, mach in enumerate(mach_numbers):
+        color = cmap(i)
+        
+        # Plot h/l values
+        y_vals = [pivot.loc[h_l, mach] for h_l in h_l_values]
+        ax.plot(h_l_values, y_vals, 'o-', color=color, linewidth=2, 
+                markersize=8, label=f'M = {mach}')
+        
+        # Plot optimal value as a horizontal dashed line
+        if show_optimal:
+            ax.axhline(y=tau_x_by_mach[mach], color=color, linestyle='--', 
+                       alpha=0.5, linewidth=1.5)
+            
+            # Add marker at far right for optimal
+            ax.scatter(h_l_values[-1] + 0.005, tau_x_by_mach[mach], 
+                       marker='*', s=150, color=color, edgecolor='k', 
+                       linewidths=0.5, zorder=5)
+    
+    # Add annotation for optimal lines
+    if show_optimal:
+        ax.annotate('★ = Optimal h/l', xy=(0.98, 0.02), xycoords='axes fraction',
+                    fontsize=11, ha='right', va='bottom',
+                    bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
+    
+    # Formatting
+    if title is None:
+        title = "Axial Force vs h/l\n(Varying Mach Number)"
+    ax.set_title(title, fontsize=16, fontweight='bold')
+    ax.set_xlabel("h/l", fontsize=14)
+    ax.set_ylabel(ylabel, fontsize=14)
+    ax.tick_params(labelsize=12)
+    ax.grid(True, alpha=0.3)
+    ax.legend(title="Mach Number", title_fontsize=12, fontsize=11,
+              loc='center left', bbox_to_anchor=(1.02, 0.5))
+    
+    # Adjust layout
+    plt.tight_layout()
+    plt.savefig(output_path, dpi=150, bbox_inches='tight', 
+                facecolor='white', edgecolor='none')
+    
+    if show_plot:
+        plt.show()
+    else:
+        plt.close()
+    
+    print(f"Plot saved to: {output_path}")
+
+
+def generate_axial_force_plot_dual_mach(df, first_shock_pressures,
+                                         output_path='axial_force_dual_plot_mach.png', 
+                                         title=None, ylabel="Axial Force [N/m]",
+                                         normalize_by_shock=True, show_plot=True):
+    """
+    Generate a dual-panel plot:
+    - Left: Axial force vs h/l (lines for each Mach number)
+    - Right: Axial force vs Mach number (lines for each h/l)
+    
+    Parameters
+    ----------
+    df : pandas DataFrame
+        DataFrame with axial force data (must include 'case_key' column)
+    first_shock_pressures : dict
+        Dictionary of first shock pressures {case_name: pressure}
+    output_path : str
+        Path to save the output image
+    title : str, optional
+        Custom title
+    ylabel : str
+        Label for y-axis
+    normalize_by_shock : bool
+        Whether to normalize by first shock pressure (default: True)
+    show_plot : bool
+        Whether to display the plot in terminal (default: True)
+    """
+    import re
+    
+    # Extract unique values
+    mach_numbers = sorted(df['Mach'].unique())
+    h_l_values = sorted(df['h/l'].unique())
+    
+    # Get optimal values
+    tau_x_by_mach = df.groupby('Mach')['tau_h_l_x [N·m/m²]'].first().to_dict()
+    
+    # Create normalized DataFrame if requested
+    if normalize_by_shock:
+        df_plot = df.copy()
+        df_plot['tau_h_l_norm'] = df_plot.apply(
+            lambda row: row['tau_h_l [N·m/m²]'] / first_shock_pressures[row['case_key']] 
+            if row['case_key'] in first_shock_pressures else row['tau_h_l [N·m/m²]'], 
+            axis=1
+        )
+        df_plot['tau_h_l_x_norm'] = df_plot.apply(
+            lambda row: row['tau_h_l_x [N·m/m²]'] / first_shock_pressures[row['case_key']] 
+            if row['case_key'] in first_shock_pressures else row['tau_h_l_x [N·m/m²]'], 
+            axis=1
+        )
+        
+        # Update optimal values dictionary with normalized values
+        tau_x_by_mach_norm = {}
+        for mach in mach_numbers:
+            # Find the case_key for h/l = 0.05 at this Mach
+            mask = (df_plot['Mach'] == mach) & (np.abs(df_plot['h/l'] - 0.05) < 1e-6)
+            if mask.any():
+                tau_x_by_mach_norm[mach] = df_plot.loc[mask, 'tau_h_l_norm'].iloc[0]
+        
+        # Pivot tables with normalized values
+        pivot_hl = df_plot.pivot(index='h/l', columns='Mach', values='tau_h_l_norm')
+        pivot_mach = df_plot.pivot(index='Mach', columns='h/l', values='tau_h_l_norm')
+        tau_x_by_mach_plot = tau_x_by_mach_norm
+    else:
+        # Pivot tables without normalization
+        pivot_hl = df.pivot(index='h/l', columns='Mach', values='tau_h_l [N·m/m²]')
+        pivot_mach = df.pivot(index='Mach', columns='h/l', values='tau_h_l [N·m/m²]')
+        tau_x_by_mach_plot = tau_x_by_mach
+    
+    # Create figure with two subplots
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(18, 7))
+    
+    # Colormaps
+    cmap_mach = cm.get_cmap('viridis', len(mach_numbers))
+    cmap_hl = cm.get_cmap('plasma', len(h_l_values))
+    
+    # =========================================================================
+    # Left plot: Force vs h/l (one line per Mach number)
+    # =========================================================================
+    for i, mach in enumerate(mach_numbers):
+        color = cmap_mach(i)
+        y_vals = [pivot_hl.loc[h_l, mach] for h_l in h_l_values]
+        
+        ax1.plot(h_l_values, y_vals, 'o-', color=color, linewidth=2, 
+                 markersize=8, label=f'M = {mach}')
+        
+        # Optimal reference (h/l = 0.05)
+        if mach in tau_x_by_mach_plot:
+            ax1.axhline(y=tau_x_by_mach_plot[mach], color=color, linestyle='--', 
+                        alpha=0.4, linewidth=1.5)
+    
+    title_left = "Axial Force / P_shock vs h/l" if normalize_by_shock else "Axial Force vs h/l"
+    ax1.set_title(title_left, fontsize=28, fontweight='bold')
+    ax1.set_xlabel("h/l", fontsize=21)
+    ax1.set_ylabel(ylabel, fontsize=18)
+    ax1.tick_params(labelsize=16)
+    ax1.grid(True, alpha=0.3)
+    ax1.axvline(x=0.05, color='black', linestyle='--', linewidth=2, label='Optimal')
+    ax1.legend(title="Mach", title_fontsize=16, fontsize=14, loc='best', ncol=2)
+    
+    # =========================================================================
+    # Right plot: Force vs Mach number (one line per h/l)
+    # =========================================================================
+    # First plot optimal
+    optimal_vals = [tau_x_by_mach_plot[mach] for mach in mach_numbers if mach in tau_x_by_mach_plot]
+    if optimal_vals:
+        ax2.plot(mach_numbers, optimal_vals, 'k-', linewidth=3, markersize=10, 
+                 marker='*', label='Optimal (h/l=0.05)', zorder=10)
+    
+    # Then plot each h/l
+    for i, h_l in enumerate(h_l_values):
+        color = cmap_hl(i)
+        y_vals = [pivot_mach.loc[mach, h_l] for mach in mach_numbers]
+        ax2.plot(mach_numbers, y_vals, 'o-', color=color, linewidth=2, 
+                 markersize=6, label=f'h/l = {h_l:.2f}')
+    
+    title_right = "Axial Force / P_shock vs Mach" if normalize_by_shock else "Axial Force vs Mach Number"
+    ax2.set_title(title_right, fontsize=28, fontweight='bold')
+    ax2.set_xlabel("Mach Number", fontsize=21)
+    ax2.set_ylabel(ylabel, fontsize=18)
+    ax2.tick_params(labelsize=16)
+    ax2.grid(True, alpha=0.3)
+    ax2.legend(title="h/l", title_fontsize=16, fontsize=14, loc='best', ncol=2)
+    
+    # Main title
+    if title is None:
+        title = "Axial Force Trends: h/l and Mach Number Effects"
+        if normalize_by_shock:
+            title += " (Normalized by First Shock Pressure)"
+    fig.suptitle(title, fontsize=34, fontweight='bold', y=1.02)
+    
+    plt.tight_layout()
+    plt.savefig(output_path, dpi=150, bbox_inches='tight', 
+                facecolor='white', edgecolor='none')
+    
+    if show_plot:
+        plt.show()
+    else:
+        plt.close()
+    
+    print(f"Dual plot saved to: {output_path}")
+
+
+
+
+# Step 1: Create DataFrame from your dictionaries
+df_axial_force = create_axial_force_dataframe(
+    tau_x_dict=tau_x,
+    x_dict=x
+)
+
+# Step 2: Generate single plot (Force vs h/l) - shown in terminal
+generate_axial_force_plot_mach(
+    df=df_axial_force,
+    output_path=r'C:\Users\hhsabbah\Documents\01_Bladeless_Proj\35_Git\Supersonic-Bladeless-Turbine\SBTTD\reports\figures\Mach Study\axialForce_vs_hl.png',
+    title="Axial Force vs h/l\n(Varying Mach Number)",
+    ylabel="Axial Force [N/m]",
+    show_optimal=True,
+    show_plot=True  # Shows in terminal
+)
+
+# Step 3: Generate dual plot WITH normalization by first_shock_pressures
+generate_axial_force_plot_dual_mach(
+    df=df_axial_force,
+    first_shock_pressures = first_shock_pressures,  # Your dictionary
+    output_path=r'C:\Users\hhsabbah\Documents\01_Bladeless_Proj\35_Git\Supersonic-Bladeless-Turbine\SBTTD\reports\figures\Mach Study\axialForce_dual_normalized.png',
+    title="Axial Force Trends (Normalized)",
+    ylabel="Axial Force / P_shock [m]",
+    normalize_by_shock=True,  # Uses first_shock_pressures
+    show_plot=True  # Shows in terminal
+)
+
+# Step 4: Generate dual plot WITHOUT normalization
+generate_axial_force_plot_dual_mach(
+    df=df_axial_force,
+    first_shock_pressures = first_shock_pressures,
+    output_path=r'C:\Users\hhsabbah\Documents\01_Bladeless_Proj\35_Git\Supersonic-Bladeless-Turbine\SBTTD\reports\figures\Mach Study\axialForce_dual.png',
+    title="Axial Force Trends",
+    ylabel="Axial Force [N/m]",
+    normalize_by_shock=False,  # No normalization
+    show_plot=True
+)
+
+
+
+
+
+
+
+
 
 
 
@@ -3899,49 +4552,30 @@ pivot_table.to_csv(r'C:\Users\hhsabbah\Documents\01_Bladeless_Proj\32_Geometry C
 #------------------------------------------------------------------------------------------------------------------------------------#
 """
 
+# Analyze all geometries at once
+results = analyze_geometries(x, y, p_inf=1.0)  # p_inf in your units
 
-import seaborn as sns
+# Get just the first shock pressures as a dictionary
+first_shock_pressure_ratios = get_first_shock_pressures(results)
 
-# Imposing h/l # 
-min_hl = 0 
-max_hl = 0.1
+# getting actual first shock pressure # 
+first_shock_pressures = {}
 
- 
-# Corodinates # 
-temp_key = "h_l_0.02_Mach_1.5"
-x_temp = ds_by_case[temp_key]["X"].data
-y_temp = ds_by_case[temp_key]["Y"].data
 
+for key,_ in P_inlet.items(): 
+    first_shock_pressures[key] = first_shock_pressure_ratios[key] * np.mean(P_inlet[key])
 
-# Imposed mask # 
-mask = (min_hl <= x_temp) & (max_hl >= x_temp)
 
-# imposing mask #
-x_temp = x_temp[mask]
-y_temp = y_temp[mask]
 
-# Getting the gradient to compute the respective angle # 
-dy_dx = np.gradient(y_temp,x_temp)
-theta = np.degrees((np.arctan(dy_dx)))
 
 
-# Getting th
 
 
 
-# Getting dtheta/dx to determine if the flow is compressing or expanding # 
-dtheta_dx = np.gradient(theta)
 
-# Plotting the x and y values # 
-ax = sns.lineplot(x = x_temp,y = y_temp, color = 'black')
-sns.set_style("whitegrid")
 
-ax.set_xlabel('X [m]', fontsize = 14)
-ax.set_ylabel('Y [m]', fontsize = 14)
-ax.set_title("X Vs Y", fontsize = 24)
 
 
-plt.show()
 
 
 
@@ -3967,317 +4601,6 @@ plt.show()
 
 
 
-
-
-
-
-
-
-
-
-
-
-
-#%%
-"""
-#------------------------------------------------------------------------------------------------------------------------------------#
-                        Creating shock-expansion theory to understand the physics at the wall 
-#------------------------------------------------------------------------------------------------------------------------------------#
-"""
-
-
-# ====== FUNCTIONS ====== # 
-def shock_expansion_wavy_wall(x_wall, y_wall, M_inf, P_inf, gamma=1.4):
-    """
-    Shock-expansion theory for wavy wall with detachment detection.
-    
-    Returns:
-        P_wall: pressure distribution (up to detachment point)
-        M_wall: Mach number distribution
-        detachment_info: dict with detachment information if occurred
-    """
-    N = len(x_wall)
-    P_wall = np.zeros(N)
-    M_wall = np.zeros(N)
-    
-    # Initial conditions
-    P_wall[0] = P_inf
-    M_wall[0] = M_inf
-    
-    # Track if detachment occurs
-    detachment_occurred = False
-    detachment_info = None
-    
-    for i in range(1, N):
-        # Calculate local wall angles
-        if i == 1:
-            theta_old = 0  # Assume aligned with freestream at start
-        else:
-            theta_old = np.arctan2(y_wall[i] - y_wall[i-1], 
-                                   x_wall[i] - x_wall[i-1])
-        
-        if i < N - 1:
-            theta_new = np.arctan2(y_wall[i+1] - y_wall[i], 
-                                   x_wall[i+1] - x_wall[i])
-        else:
-            theta_new = theta_old
-        
-        # Deflection angle
-        delta_theta = theta_new - theta_old
-        
-        if delta_theta > 1e-6:  # Compression
-            # Oblique shock relations
-            M_new, P_new, detached, shock_info = oblique_shock(
-                M_wall[i-1], P_wall[i-1], delta_theta, gamma
-            )
-            
-            if detached:
-                # Shock detachment detected!
-                detachment_occurred = True
-                detachment_info = {
-                    'location_index': i,
-                    'x_location': x_wall[i],
-                    'y_location': y_wall[i],
-                    'Mach_number': M_wall[i-1],
-                    'deflection_angle_deg': shock_info['theta_requested'],
-                    'max_deflection_deg': shock_info['theta_max'],
-                    'message': (f"Shock detachment at x = {x_wall[i]:.3f}, "
-                              f"y = {y_wall[i]:.3f}\n"
-                              f"Local Mach number: {M_wall[i-1]:.3f}\n"
-                              f"Deflection angle: {shock_info['theta_requested']:.2f}° "
-                              f"exceeds maximum {shock_info['theta_max']:.2f}°\n"
-                              f"A detached bow shock is expected beyond this point.")
-                }
-                
-                # Truncate arrays to detachment point
-                P_wall = P_wall[:i]
-                M_wall = M_wall[:i]
-                x_wall = x_wall[:i]
-                y_wall = y_wall[:i]
-                
-                print("\n" + "="*70)
-                print("⚠️  SHOCK DETACHMENT DETECTED  ⚠️")
-                print("="*70)
-                print(detachment_info['message'])
-                print("="*70 + "\n")
-                
-                break
-            
-            M_wall[i] = M_new
-            P_wall[i] = P_new
-            
-        elif delta_theta < -1e-6:  # Expansion
-            # Prandtl-Meyer expansion (always attached)
-            M_wall[i], P_wall[i] = prandtl_meyer_expansion(
-                M_wall[i-1], P_wall[i-1], abs(delta_theta), gamma
-            )
-        else:  # No change
-            M_wall[i] = M_wall[i-1]
-            P_wall[i] = P_wall[i-1]
-    
-    return P_wall, M_wall, detachment_info
-    
-
-
-# OBLIQUE SHOCK FUNCITON # 
-def oblique_shock(M1, P1, theta, gamma=1.4):
-    """
-    Apply oblique shock relations.
-    
-    Returns:
-        M2: exit Mach number (or None if detached)
-        P2: exit pressure (or None if detached)
-        detached: boolean flag
-        shock_info: dictionary with additional info
-    """
-    # Solve for shock angle
-    beta, detached, theta_max = solve_shock_angle(M1, theta, gamma)
-    
-    if detached:
-        # Return info about detachment
-        shock_info = {
-            'detached': True,
-            'theta_requested': np.degrees(theta),
-            'theta_max': np.degrees(theta_max),
-            'M1': M1
-        }
-        return None, None, detached, shock_info
-    
-    # Normal component of Mach number
-    Mn1 = M1 * np.sin(beta)
-    
-    # Normal shock relations
-    Mn2_sq = ((gamma - 1)*Mn1**2 + 2) / (2*gamma*Mn1**2 - (gamma - 1))
-    Mn2 = np.sqrt(Mn2_sq)
-    
-    # Pressure ratio
-    P2 = P1 * (1 + (2*gamma/(gamma + 1)) * (Mn1**2 - 1))
-    
-    # Exit Mach number
-    M2 = Mn2 / np.sin(beta - theta)
-    
-    shock_info = {
-        'detached': False,
-        'beta': np.degrees(beta),
-        'theta': np.degrees(theta),
-        'theta_max': np.degrees(theta_max)
-    }
-    
-    return M2, P2, detached, shock_info
-
-
-
-
-# SOLVE SHOCK ANGLE FUNCTION # 
-def solve_shock_angle(M1, theta, gamma=1.4):
-    """
-    Solve theta-beta-Mach relation iteratively.
-    
-    Returns:
-        beta: shock angle (radians), or None if detached
-        detached: boolean flag indicating if shock is detached
-        theta_max: maximum possible deflection angle
-    """
-    from scipy.optimize import fsolve
-    
-    # First, check if deflection exceeds maximum
-    theta_max, beta_at_max = calculate_max_deflection_angle(M1, gamma)
-    
-    if theta > theta_max:
-        # Shock will be detached
-        return None, True, theta_max
-    
-    # Shock is attached, solve for shock angle
-    def theta_beta_relation(beta):
-        num = 2 / np.tan(beta) * (M1**2 * np.sin(beta)**2 - 1)
-        den = M1**2 * (gamma + np.cos(2*beta)) + 2
-        return np.arctan(num / den) - theta
-    
-    # Initial guess: weak shock solution
-    mu = np.arcsin(1/M1)  # Mach angle
-    beta_guess = mu + theta/2
-    
-    # Ensure guess is in valid range
-    beta_guess = np.clip(beta_guess, mu + 0.01, np.pi/2 - 0.01)
-    
-    try:
-        beta = fsolve(theta_beta_relation, beta_guess)[0]
-        
-        # Verify solution is physical (weak shock, not strong shock)
-        # Weak shock: beta < beta_at_max
-        if beta > beta_at_max:
-            # Strong shock solution - typically want weak shock
-            # Re-solve with different initial guess
-            beta_guess = (mu + theta_max) / 2
-            beta = fsolve(theta_beta_relation, beta_guess)[0]
-        
-        return beta, False, theta_max
-        
-    except:
-        # Solver failed - likely at or near detachment
-        return None, True, theta_max
-
-
-
-# MAX DEFLECTION ANGLE CALCULATION FUNCTION # 
-def calculate_max_deflection_angle(M1, gamma=1.4):
-    """
-    Calculate maximum deflection angle for given Mach number.
-    Beyond this angle, shock detaches.
-    
-    Returns:
-        theta_max: maximum deflection angle (radians)
-        beta_at_max: shock angle at maximum deflection (radians)
-    """
-    from scipy.optimize import minimize_scalar
-    
-    def theta_from_beta(beta):
-        """Calculate deflection angle from shock angle"""
-        num = 2 / np.tan(beta) * (M1**2 * np.sin(beta)**2 - 1)
-        den = M1**2 * (gamma + np.cos(2*beta)) + 2
-        return np.arctan(num / den)
-    
-    # The maximum occurs somewhere between Mach angle and 90°
-    mu = np.arcsin(1/M1)  # Mach angle (minimum possible)
-    
-    # Find maximum by minimizing negative theta
-    result = minimize_scalar(lambda b: -theta_from_beta(b), 
-                            bounds=(mu, np.pi/2 - 0.01),
-                            method='bounded')
-    
-    beta_at_max = result.x
-    theta_max = theta_from_beta(beta_at_max)
-    
-    return theta_max, beta_at_max
-
-
-# PRANDTL-MEYER EXPANSION FUNCTION # 
-def prandtl_meyer_expansion(M1, P1, theta, gamma):
-    """Apply Prandtl-Meyer expansion"""
-    # Prandtl-Meyer function
-    def nu(M):
-        a = np.sqrt((gamma + 1) / (gamma - 1))
-        b = np.sqrt((gamma - 1) / (gamma + 1) * (M**2 - 1))
-        c = np.sqrt(M**2 - 1)
-        return a * np.arctan(b) - np.arctan(c)
-    
-    # Initial and final PM angles
-    nu1 = nu(M1)
-    nu2 = nu1 + theta  # Expansion turns away, so add theta
-    
-    # Solve for M2
-    from scipy.optimize import fsolve
-    M2 = fsolve(lambda M: nu(M) - nu2, M1 + 0.5)[0]
-    
-    # Isentropic pressure ratio
-    P2 = P1 * ((1 + (gamma-1)/2 * M1**2) / 
-               (1 + (gamma-1)/2 * M2**2))**(gamma/(gamma-1))
-    
-    return M2, P2
-
-
-
-
-# ====== SETUP ====== #
-h_l = 0.02
-h = 1/15
-n = 5
-l = h / h_l
-num_of_points = 1500 
-x_wave = np.linspace(0, l, num_of_points)
-y_wave = h * np.sin((n * np.pi * x_wave) / l)
-
-
-# ====== FREESTREAM CONDITIONS ===== #
-M_inf = 1.6 
-P_inf = 9e5 # Pascals 
-gamma = 1.4 
-
-
-
-# ======= COMPUTING WALL CONDITIONS ====== #
-P_wall,M_wall,detachment_info = shock_expansion_wavy_wall(x_wave, y_wave, M_inf, P_inf, gamma)
-
-
-# ====== PLOTTING RESULTS ======= # 
-
-
-# Pressure Vs X # 
-plt.plot(x_wave, P_wall)
-plt.title("Pressure Vs X")
-plt.ylabel("Pressure[Pa]")
-plt.xlabel("X")
-plt.grid()
-plt.show()
-
-
-# Mach Vs X # 
-plt.plot(x_wave, M_wall)
-plt.title("Mach Vs X")
-plt.ylabel("Mach")
-plt.xlabel("X")
-plt.grid()
-plt.show()
 
 
 #%%
