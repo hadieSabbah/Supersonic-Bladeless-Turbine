@@ -2,8 +2,9 @@ import matplotlib.pyplot as plt
 import matplotlib.cm as cm
 import matplotlib as mpl
 import numpy as np
+import pandas as pd
 import re
-
+from pathlib import Path
 
 
 
@@ -191,7 +192,103 @@ def subplotter(nrows, ncols, x_data, y_data, x_strings, y_strings,
         plt.savefig(rf'{dirc}\{figName}.pdf', bbox_inches='tight')
     
     return fig, axes
+
     
+def plot_scaled_axialForce_vs_hl(results_dict, h_l_values, save=False):
+    """
+    Plot Scaled Axial Force vs h/l for varying Mach numbers.
+    
+    Parameters
+    ----------
+    results_dict : dict
+        Dictionary with keys like 'h_l_0.02_Mach_1.5' and values as scaled axial force
+    h_l_values : array
+        Array of h/l values
+    save : bool
+        Whether to save the figure
+    
+    Returns
+    -------
+    fig, ax
+    """
+    
+    # Set publication-quality parameters
+    mpl.rcParams['font.family'] = 'serif'
+    mpl.rcParams['font.serif'] = ['Times New Roman']
+    mpl.rcParams['font.size'] = 18
+    mpl.rcParams['axes.labelsize'] = 10
+    mpl.rcParams['axes.titlesize'] = 14
+    mpl.rcParams['xtick.labelsize'] = 8
+    mpl.rcParams['ytick.labelsize'] = 8
+    mpl.rcParams['legend.fontsize'] = 6
+    mpl.rcParams['legend.title_fontsize'] = 8
+    mpl.rcParams['axes.linewidth'] = 1
+    mpl.rcParams['lines.linewidth'] = 1.5
+    mpl.rcParams['grid.linewidth'] = 0.5
+    mpl.rcParams['figure.dpi'] = 150
+    mpl.rcParams['savefig.dpi'] = 600
+    
+    # Extract unique Mach numbers from keys
+    mach_numbers = set()
+    for key in results_dict.keys():
+        match = re.search(r'Mach_([\d.]+)', key)
+        if match:
+            mach_numbers.add(float(match.group(1)))
+    mach_numbers = sorted(mach_numbers)
+    
+    # Get colormap
+    cmap = cm.get_cmap('cividis', len(mach_numbers))
+    
+    # Create figure
+    fig, ax = plt.subplots(figsize=(5, 4))
+    
+    # Plot each Mach number
+    for i, mach in enumerate(mach_numbers):
+        # Collect data for this Mach number
+        forces = []
+        h_l_plot = []
+        
+        for h_l in h_l_values:
+            # Construct key
+            case_key = f"h_l_{h_l:.2f}_Mach_{mach:.1f}"
+            
+            if case_key in results_dict:
+                forces.append(results_dict[case_key])
+                h_l_plot.append(h_l)
+        
+        # Convert to arrays
+        forces = np.array(forces)
+        h_l_plot = np.array(h_l_plot)
+        
+        color = cmap(i)
+        label = f"M = {mach:.1f}"
+        
+        # Plot line with markers
+        ax.plot(h_l_plot, forces, 'o-', color=color, 
+                linewidth=1.5, markersize=6, label=label)
+    
+    # Labels and formatting
+    ax.set_xlabel('h/l')
+    ax.set_ylabel(r'$F_{RANS} / F_{Small Pert}$')
+    ax.set_title('Scaled Axial Force vs h/l\n(Varying Mach Number)')
+    ax.legend(title='Mach Number', loc='best', frameon=False)
+    ax.grid(True, alpha=0.3)
+    
+    # Add horizontal line at y=1 for reference
+    ax.axhline(y=1.0, color='black', linestyle='--', linewidth=1, alpha=0.5, label='Perfect Agreement')
+    
+    plt.tight_layout()
+    plt.show()
+    
+    # Save if requested
+    if save:
+        dirc = r"C:\Users\hhsabbah\Documents\01_Bladeless_Proj\35_Git\Supersonic-Bladeless-Turbine\SBTTD\reports\figures\Mach Study"
+        plt.savefig(rf'{dirc}\scaledAxialForce_vs_hl.png', dpi=600, bbox_inches='tight')
+        plt.savefig(rf'{dirc}\scaledAxialForce_vs_hl.pdf', bbox_inches='tight')
+    
+    return fig, ax
+
+
 def plotter_multiPerCase(x_dict, y_dict, x_string, y_string, unit_x, unit_y,
                      filter_param, filter_value, vary_param='mach',
                      labels=None, cmap_name='cividis', save=False, title=None):
@@ -410,8 +507,17 @@ def plotter_multi_all(x_dict, y_dict, x_string, y_string, unit_x, unit_y,
     mpl.rcParams['figure.dpi'] = 150
     mpl.rcParams['savefig.dpi'] = 600
     
-    # Get colormap
-    case_keys = list(x_dict.keys())
+
+    
+    # 
+    if isinstance(x_dict, dict) and x_dict:
+        case_keys = list(x_dict.keys())
+    elif isinstance(y_dict, dict) and y_dict:
+        case_keys = list(y_dict.keys())
+    else:
+        raise ValueError("Neither x_dict nor y_dict is a valid non-empty dictionary")
+            
+    # Get colormap   
     cmap = cm.get_cmap(cmap_name, len(case_keys))
     
     # Create labels
@@ -456,3 +562,381 @@ def plotter_multi_all(x_dict, y_dict, x_string, y_string, unit_x, unit_y,
         plt.savefig(rf'{dirc}\{figName}.pdf', bbox_inches='tight')
     
     return fig, ax
+
+
+
+
+
+
+
+### Plotting residuals ####
+
+
+def load_residuals(path, skiprows=3, ncols=4):
+    # Read all columns as strings, whitespace-separated
+    df = pd.read_csv(path, sep=r"\s+", header=None, skiprows=skiprows, engine="python")
+    # Coerce anything non-numeric to NaN
+    df = df.apply(pd.to_numeric, errors="coerce")
+    # Keep only numeric columns
+    num = df.select_dtypes(include=[np.number])
+    if num.shape[1] < ncols:
+        raise ValueError(f"Found only {num.shape[1]} numeric columns in {path}, need {ncols}.")
+    # Most residual files have iteration/index columns first; residuals are usually the last 4 numeric cols
+    resid = num.iloc[:, -ncols:].to_numpy()
+    return resid
+
+
+
+# Root directory to import mcfd_tec.bin files # 
+
+def residual_plotter(rootDir = Path(r"C:\Users\hhsabbah\Documents\01_Bladeless_Proj\32_Geometry Code\Results\Mach Study 2"), Resid_labels = ["energy", "mass", "x-momentum", "y-momentum"]):
+    subDirs1 = [p for p in rootDir.iterdir() if p.is_dir()]
+    fileName = "mcfd.rhsgi"
+    subDirs2_rhsgi = [p for d in subDirs1 for p in d.iterdir() if p.is_dir()]  # flattened
+    file_paths_rhsgi = [p / fileName for p in subDirs2_rhsgi]
+    
+
+    
+    for file_path_rhsgi in file_paths_rhsgi:
+        try: 
+            resid = load_residuals(file_path_rhsgi.as_posix(), skiprows=3, ncols=4)
+        
+            # Normalize each column by its first entry (avoid divide-by-zero)
+            denom = resid[0, :].copy()
+            denom[denom == 0] = 1.0
+            resid = resid / denom
+        
+            iterations = np.arange(1, resid.shape[0] + 1)
+        
+            plt.figure(figsize=(8, 6))
+            for j in range(resid.shape[1]):
+                plt.semilogy(iterations, resid[:, j], linewidth=2)
+            plt.title(f"Residuals Vs Iterations: {file_path_rhsgi.parent.name}", fontsize=24)
+            plt.legend(Resid_labels)
+            plt.xlabel("Iterations")
+            plt.ylabel("Residuals")
+            plt.grid(True, which="both")
+            plt.tick_params(axis='both', which='major', labelsize=18)
+            plt.show()
+        except: 
+            print(f"Couldn't Find rhsgi file for {file_path_rhsgi.parent.name}\n")
+    
+    
+    
+        residMAX = max(resid[-1])
+        print(f"Maximum residual: {residMAX:.2e} \n")
+        
+        
+
+def mass_flux_analyzer(root_dir=None, file_name="minfo1_e1", mass_flux_criterion=0.8, 
+                       plot=True, save=False):
+    """
+    Analyze mass flux convergence from ANSYS Fluent monitor files.
+    
+    Parameters
+    ----------
+    root_dir : str or Path, optional
+        Root directory containing parametric study solution files
+        If None, uses default directory
+    file_name : str, optional
+        Name of the mass flux monitor file (default: "minfo1_e1")
+    mass_flux_criterion : float, optional
+        Convergence criterion for net mass flux (default: 0.8)
+    plot : bool, optional
+        Whether to plot each case (default: True)
+    save : bool, optional
+        Whether to save the plots (default: False)
+        
+    Returns
+    -------
+    mass_flux_end : dict
+        Dictionary of final mass flux values {case_name: final_mass_flux}
+    max_key : str
+        Case name with highest mass flux
+    max_val : float
+        Highest mass flux value
+    """
+    
+    # Set default root directory if not provided
+    if root_dir is None:
+        root_dir = r"C:\Users\hhsabbah\Documents\01_Bladeless_Proj\21_ANSYS Workflow Automation\8_Mach_Sweep_Study_2(Solution)\4_Mach_Reruns"
+    
+    # Root directory to import files
+    rootDir_flux = Path(root_dir)
+    subDirs1_flux = [p for p in rootDir_flux.iterdir() if p.is_dir()]
+    
+    # Flatten directory structure
+    subDirs2_flux = [p for d in subDirs1_flux for p in d.iterdir() if p.is_dir()]
+    file_paths_flux = [p / file_name for p in subDirs2_flux]
+    
+    # Load data and analyze
+    mass_flux_end = {}
+    
+    for file_path_flux in file_paths_flux:
+        # Read CSV file
+        df = pd.read_csv(file_path_flux, sep=r"\s+", comment="#")
+        df.rename(columns={"mass_flux": "misc", 
+                          "infout1": "iterations", 
+                          "d": "mass_flux"}, inplace=True)
+        
+        # Plot if requested
+        if plot:
+            plt.figure(figsize=(8, 6))
+            plt.plot(df["iterations"][:-3], df["mass_flux"][:-3])
+            
+            plt.ticklabel_format(axis='y', style='sci', scilimits=(0, 1))
+            
+            plt.xlabel("Iterations")
+            plt.ylabel("Net Mass Flux")
+            plt.title(f"Net Mass Flux Vs Iterations: {file_path_flux.parent.name}")
+            plt.grid(True, which="both")
+            plt.tick_params(axis='both', which='major', labelsize=18)
+            
+            if save:
+                save_dir = Path(r"C:\Users\hhsabbah\Documents\01_Bladeless_Proj\35_Git\Supersonic-Bladeless-Turbine\SBTTD\reports\figures\Convergence")
+                save_dir.mkdir(parents=True, exist_ok=True)
+                plt.savefig(save_dir / f"mass_flux_{file_path_flux.parent.name}.png", 
+                           dpi=300, bbox_inches='tight')
+            
+            plt.show()
+        
+        # Store final mass flux value
+        mass_flux_end[file_path_flux.parent.name] = df["mass_flux"][:-3].iloc[-1]
+    
+    # Find maximum mass flux
+    mass_fluxMAX_key = max(mass_flux_end, key=mass_flux_end.get)
+    mass_fluxMAX_val = mass_flux_end[mass_fluxMAX_key]
+    print(f"Highest last iteration mass flux: {mass_fluxMAX_val:.2e} at {mass_fluxMAX_key}\n")
+    
+    # Check convergence criteria
+    RED = '\033[31m'
+    RESET = '\033[0m'
+    
+    for key, value in mass_flux_end.items():
+        if value > mass_flux_criterion:
+            diff = value - mass_flux_criterion
+            if diff > 1.0:
+                print(f"{key} does not meet criteria (net mass flux < {mass_flux_criterion}). "
+                      f"Off by {RED}{diff:.1f}{RESET} and net mass flux is {RED}{value:.2e}{RESET}\n")
+            else:
+                print(f"{key} does not meet criteria (net mass flux < {mass_flux_criterion}). "
+                      f"Off by {diff:.1f} and net mass flux is {value:.2e}\n")
+    
+    return mass_flux_end, mass_fluxMAX_key, mass_fluxMAX_val
+
+
+
+
+
+
+"""
+#------------------------------------------------------------------------------------------------------------------------------------#
+     Getting all residuals and all convergence criterions(net mass flow) to be able to see if the simuilations converged properly
+#------------------------------------------------------------------------------------------------------------------------------------#
+""" 
+def mass_flux_imbalance_analyzer(root_dir=None, file_name_total="minfo1_e1", 
+                                 file_name_inlet="minfo1_e3", plot=True, 
+                                 save_csv=True, csv_filename="mass_flux_imbalance_last.csv"):
+    """
+    Analyze mass flux imbalance between total (net) and inlet mass flux.
+    
+    Parameters
+    ----------
+    root_dir : str or Path, optional
+        Root directory containing case folders with minfo files
+        If None, uses default directory
+    file_name_total : str, optional
+        Name of total/net mass flux file (default: "minfo1_e1")
+    file_name_inlet : str, optional
+        Name of inlet mass flux file (default: "minfo1_e3")
+    plot : bool, optional
+        Whether to plot imbalance vs iterations (default: True)
+    save_csv : bool, optional
+        Whether to save results to CSV (default: True)
+    csv_filename : str, optional
+        Name of CSV output file (default: "mass_flux_imbalance_last.csv")
+        
+    Returns
+    -------
+    results : list
+        List of tuples (case_name, last_iteration, last_imbalance_percent)
+    common_cases : list
+        List of case names that have both e1 and e3 files
+    """
+    
+    # Set default root directory if not provided
+    if root_dir is None:
+        root_dir = r"C:\Users\hhsabbah\Documents\01_Bladeless_Proj\32_Geometry Code\Results\Mach Study 2\h_l_0.02"
+    
+    # Get subdirectories
+    rootDir_info = Path(root_dir)
+    subDirs_info = [p for p in rootDir_info.iterdir() if p.is_dir()]
+    
+    # Build file paths
+    file_paths_total = [p / file_name_total for p in subDirs_info]
+    file_paths_inlet = [p / file_name_inlet for p in subDirs_info]
+    
+    def read_minfo_flexible(path: Path):
+        """
+        Flexible reader for minfo1_* files.
+        - Skips comment/blank lines.
+        - On each data line, parses *numeric* tokens only.
+        - If >=3 numbers: first is 'iter', last is 'val'.
+          If exactly 2 numbers: treat last as 'val' and auto-iterate (1,2,3,...).
+        Returns arrays (iter, val) as float.
+        """
+        iters, vals = [], []
+        auto_i = 0
+        try:
+            with open(path, "r", errors="ignore") as f:
+                for line in f:
+                    s = line.strip()
+                    if not s or s.startswith("#"):
+                        continue
+                    nums = []
+                    for tok in s.replace(",", " ").split():
+                        try:
+                            nums.append(float(tok))
+                        except ValueError:
+                            continue
+                    if len(nums) >= 3:
+                        iters.append(nums[0])
+                        vals.append(nums[-1])
+                    elif len(nums) == 2:
+                        auto_i += 1
+                        iters.append(float(auto_i))
+                        vals.append(nums[-1])
+                    else:
+                        continue
+        except FileNotFoundError:
+            return np.array([]), np.array([])
+        
+        iters = np.asarray(iters, dtype=float)
+        vals = np.asarray(vals, dtype=float)
+        
+        # Sort by iteration, drop duplicate iters (keep last occurrence)
+        if iters.size:
+            order = np.argsort(iters)
+            iters, vals = iters[order], vals[order]
+            # Remove duplicates
+            uniq, idx = np.unique(iters, return_index=True)
+            iters, vals = iters[idx], vals[idx]
+        return iters, vals
+    
+    # Map case folder -> file path for e1 (net) and e3 (inlet)
+    total_by_case = {p.parent.name: p for p in file_paths_total if p.exists()}
+    inlet_by_case = {p.parent.name: p for p in file_paths_inlet if p.exists()}
+    
+    common_cases = sorted(set(total_by_case) & set(inlet_by_case))
+    
+    if not common_cases:
+        print("No case has BOTH minfo1_e1 and minfo1_e3 under root directory.")
+        return [], []
+    
+    # Plotting
+    if plot:
+        fig, ax = plt.subplots(figsize=(10, 6))
+        cmap = cm.get_cmap("viridis", len(common_cases))
+        plotted = 0
+        
+        for i, case in enumerate(common_cases):
+            p_e1 = total_by_case[case]   # minfo1_e1 (net)
+            p_e3 = inlet_by_case[case]   # minfo1_e3 (inlet)
+            
+            it_e1, v_e1 = read_minfo_flexible(p_e1)
+            it_e3, v_e3 = read_minfo_flexible(p_e3)
+            
+            if it_e1.size == 0 or it_e3.size == 0:
+                print(f"Skipping {case}: empty data (e1:{it_e1.size}, e3:{it_e3.size})")
+                continue
+            
+            # Align by iteration (inner join)
+            d_e1 = dict(zip(it_e1, v_e1))
+            d_e3 = dict(zip(it_e3, v_e3))
+            it_common = np.array(sorted(set(d_e1.keys()) & set(d_e3.keys())), dtype=float)
+            
+            if it_common.size == 0:
+                print(f"Skipping {case}: no overlapping iterations")
+                continue
+            
+            net = np.array([d_e1[it] for it in it_common], dtype=float)
+            inlet = np.array([d_e3[it] for it in it_common], dtype=float)
+            
+            mask = np.isfinite(net) & np.isfinite(inlet) & (np.abs(inlet) > 0)
+            if not np.any(mask):
+                print(f"Skipping {case}: all denom invalid/zero")
+                continue
+            
+            it_plot = it_common[mask]
+            pct = 100.0 * np.abs(net[mask]) / np.abs(inlet[mask])
+            
+            ax.plot(it_plot, pct, lw=2, color=cmap(i), label=case)
+            plotted += 1
+        
+        ax.set_title("Mass-flux Imbalance vs Iterations")
+        ax.set_xlabel("Iterations")
+        ax.set_ylabel(r"Imbalance [%]  =  $|\dot m_{\rm total}| / |\dot m_{\rm inlet}| \times 100$")
+        ax.grid(True, which="both", alpha=0.35)
+        
+        if plotted:
+            ax.legend(title="Cases", loc="center left", bbox_to_anchor=(1.02, 0.5))
+        else:
+            print("No curves plotted — check the messages above for which cases were skipped.")
+        
+        fig.tight_layout()
+        plt.show()
+    
+    # Calculate last-iteration imbalance
+    print("\n=== Last-iteration mass-flux imbalance (|e1|/|e3| * 100) ===")
+    
+    results = []
+    for case in common_cases:
+        p_e1 = total_by_case[case]   # minfo1_e1 (net/total)
+        p_e3 = inlet_by_case[case]   # minfo1_e3 (inlet)
+        
+        it_e1, v_e1 = read_minfo_flexible(p_e1)
+        it_e3, v_e3 = read_minfo_flexible(p_e3)
+        
+        if it_e1.size == 0 or it_e3.size == 0:
+            print(f"Skipping {case}: empty data")
+            continue
+        
+        # Align by iteration (inner join via dicts)
+        d1 = dict(zip(it_e1, v_e1))
+        d3 = dict(zip(it_e3, v_e3))
+        it_common = np.array(sorted(set(d1) & set(d3)), dtype=float)
+        
+        if it_common.size == 0:
+            print(f"Skipping {case}: no overlapping iterations")
+            continue
+        
+        net = np.array([d1[it] for it in it_common], dtype=float)
+        inlet = np.array([d3[it] for it in it_common], dtype=float)
+        mask = np.isfinite(net) & np.isfinite(inlet) & (np.abs(inlet) > 0)
+        
+        if not np.any(mask):
+            print(f"Skipping {case}: no valid ratio (zero/NaN inlet)")
+            continue
+        
+        # Last valid sample (highest iteration with a valid ratio)
+        last_idx = np.where(mask)[0][-1]
+        last_it = it_common[last_idx]
+        last_pct = 100.0 * np.abs(net[last_idx]) / np.abs(inlet[last_idx])
+        
+        results.append((case, last_it, last_pct))
+    
+    # Pretty print (sorted by case name)
+    for case, last_it, last_pct in sorted(results, key=lambda t: t[0]):
+        it_disp = int(round(last_it)) if abs(last_it - round(last_it)) < 1e-6 else last_it
+        print(f"{case:35s}  iter {it_disp:>7}  ->  {last_pct:8.3f}%")
+    
+    # Save to CSV if requested
+    if save_csv and results:
+        import pandas as pd
+        df = pd.DataFrame(results, columns=["case", "last_iter", "last_pct"])
+        df.to_csv(csv_filename, index=False)
+        print(f"\nResults saved to {csv_filename}")
+    
+    return results, common_cases
+
+

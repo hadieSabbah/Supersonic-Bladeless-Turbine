@@ -3,7 +3,11 @@ import numpy as np
 import os
 import seaborn as sns
 import matplotlib.pyplot as plt
-
+import pandas as pd
+import sympy as sp
+from sympy import symbols, init_printing, Integral, sqrt, pprint, simplify
+from pygasflow import isentropic_solver
+from scipy.optimize import fsolve
 
 
 """
@@ -76,7 +80,7 @@ def BLVortZero(x_offset,y_offset):
 
 
 
-#%% calude code needs to change do one yourself:
+#% calude code needs to change do one yourself:
     
 """
 Shock-Expansion Theory for Sinusoidal Wall Geometries
@@ -753,3 +757,540 @@ if __name__ == "__main__":
     print("-" * 40)
     for key, pressure in sorted(first_shock_pressures.items()):
         print(f"  {key}: p = {pressure:.4f}")
+        
+        
+        
+        
+        
+        
+        
+ 
+    
+# Small perturbation theory  # 
+
+"""
+COMPLETE PHASE-CORRECTED SMALL PERTURBATION THEORY CODE
+========================================================
+This script combines symbolic mathematics and numerical computation to analyze
+supersonic flow over wavy walls using linearized potential flow theory.
+"""
+
+
+
+# ================================================================
+# SECTION 1: SYMBOLIC SETUP AND FUNCTION CREATION
+# ================================================================
+
+
+
+# Functions #
+def find_wall_source_point(x, y, beta, y_wall_func, l):
+    """Find the wall source point for a given point (x,y) in the flow field"""
+    if y <= y_wall_func(np.clip(x, 0, l)):
+        return x
+    
+    def equation(x_wall):
+        y_wall_val = y_wall_func(x_wall)
+        return x_wall - (x - beta * (y - y_wall_val))
+    
+    x_wall_guess = x - beta * y
+    x_wall_guess = np.clip(x_wall_guess, 0, l)
+    
+    try:
+        x_wall_solution = fsolve(equation, x_wall_guess)[0]
+        return np.clip(x_wall_solution, 0, l)
+    except:
+        return x_wall_guess
+    
+    
+    
+
+def compute_phi_corrected(x, y, f_indefinite_func, y_wall_func, beta, l, h, V_infty, B, C):
+    """
+    Compute velocity potential at points (x,y) using zone of influence method.
+    
+    Parameters:
+    -----------
+    x, y : array-like
+        Coordinates where to compute phi
+    f_indefinite_func : callable
+        Function requiring (x, h, l, V_infty, B)
+    y_wall_func : callable
+        Wall shape function
+    beta : float
+        √(M²-1)
+    l, h : float
+        Geometry parameters
+    V_infty : float
+        Freestream velocity
+    B : float
+        M²-1
+    """
+    x = np.atleast_1d(x)
+    y = np.atleast_1d(y)
+    
+    if x.ndim == 2:
+        result = np.zeros_like(x)
+        for i in range(x.shape[0]):
+            for j in range(x.shape[1]):
+                x_wall = find_wall_source_point(x[i,j], y[i,j], beta, y_wall_func, l)
+                # Pass all 5 required parameters
+                result[i,j] = f_indefinite_func(x_wall, h, l, V_infty, B, C)
+        return result
+    else:
+        result = np.zeros_like(x)
+        for i in range(len(x)):
+            x_wall = find_wall_source_point(x[i], y[i], beta, y_wall_func, l)
+            # Pass all 5 required parameters
+            result[i] = f_indefinite_func(x_wall, h, l, V_infty, B)
+        return result
+
+
+
+
+
+def compute_torque_2D_norm(x, y, p, R):
+    """
+    Tangential force and torque per unit span per unit length from 2D pressure profile.
+    
+    Parameters
+    ----------
+    x, y : arrays - wall coordinates [m]
+    p : array - wall pressure [Pa]
+    R : float - radius from rotation axis [m]
+    
+    Returns
+    -------
+    dict with:
+        F_theta : tangential force per unit area [N/m²]
+        tau : torque per unit span per unit length [N·m/m²]
+    """
+    dydx = np.gradient(y, x)
+    
+    if hasattr(np, 'trapezoid'):
+        F_theta = np.trapezoid(p * dydx, x)
+    else:
+        F_theta = np.trapz(p * dydx, x)
+    
+    tau = F_theta * R
+    
+    # Normalize by projected length
+    L = x[-1] - x[0]
+    
+    return {
+        'F_theta_norm': F_theta / L,
+        'tau': tau / L,
+        'F_theta': F_theta
+    }
+
+
+
+
+
+
+
+
+# ====== CHARACTERISTIC SOURCE POINTS ====== #
+
+def get_wall_critical_points(l, n):
+    """Generate critical points along the wall for characteristic lines"""
+    wavelength = l / n
+    points = []
+    
+    for i in range(n):
+        points.append(i * wavelength)
+        points.append(i * wavelength + wavelength/4)
+        points.append(i * wavelength + wavelength/2)
+        points.append(i * wavelength + 3*wavelength/4)
+    points.append(n * wavelength)
+    
+    all_points = []
+    for i in range(len(points)-1):
+        all_points.append(points[i])
+        all_points.append(points[i] + (points[i+1] - points[i])/3)
+        all_points.append(points[i] + 2*(points[i+1] - points[i])/3)
+    all_points.append(points[-1])
+    
+    return np.array([p for p in all_points if 0.01 <= p <= l-0.01])
+
+
+
+
+
+
+
+
+
+'''
+This functions solves for the pressure on the wall using small perturbation theory. 
+
+The geometry equation is the same equation that is used to describe the simulated geometry
+
+This current solver is an analytical solver. However, I would like to have a numerical solver that creaters...
+an equation that describes the geometry from data points
+
+
+Input 1: h_l_values ---> list of h/l values you would like to analyze 
+Input 2: 
+'''
+
+def smallPertSolver(h_l_values, ds_by_case, plotting = False):
+
+    # Pre-Allocating variable for results # 
+    results_list = []
+    axialForceScaled = {}
+    
+
+    
+    for k, h_l in enumerate(h_l_values):
+        # Pre-defined variables # 
+        N = 1 
+        l = 0.1
+        h = h_l * l 
+        num_of_points = 1000
+        
+        
+        # Defining the geometry # 
+        lam = l / (2 * N + 1)*2 
+        x_wave = np.linspace(0, l, num_of_points)
+        y_wave = h * np.sin(2 * np.pi * x_wave / lam)
+        #y_wave = h*np.cos((2*np.pi*x_wave) / l ) # Textbook Problem 
+        
+        
+        # Defining variables and equations # 
+        x_variable = sp.Symbol('x_variable')
+        y_variable = sp.Symbol('y_variable')
+        y_wall = 0  
+        h_variable = sp.Symbol('h_variable')
+        l_variable = sp.Symbol("l_variable")
+        
+        
+        # The equation fo the wall is defined here # 
+        y_equation = h_variable*sp.sin((2 * sp.pi * x_variable)/lam) # Re-define if you have changed y_wave
+        
+        
+        # Range of Mach numbers # 
+        M_infty_range = np.arange(1.5,4.5,0.5)
+        
+        
+     
+        
+        # For loop to to evaluate the symbolic functions # 
+        
+        
+        for M_infty in M_infty_range:
+            
+            # Construct key from loop variables
+            case_key = f"h_l_{h_l:.2f}_Mach_{M_infty:.1f}"
+            
+            if case_key not in ds_by_case:
+                print(f"Skipping: {case_key} not found")
+                continue
+            
+            
+            
+            # Defining the flow domain # 
+            B = M_infty**2 - 1
+            
+            # Flow properties (replace with your actual data)
+            gamma = 1.4  # Standard air
+            R = 287
+            
+            # Flow results # 
+            flow_results = isentropic_solver("m",M_infty)
+            P_P0 = flow_results[1]
+            #rho_rho0 = flow_results[2]
+            T_T0 = flow_results[3]
+            
+            # Ambient Conditions # 
+            T0 = 300 #kelvin 
+            P0 = 1e6 #Pa
+            
+            # Getting static conditions # 
+            T_infty = T_T0 * T0  # K
+            p_infty = P_P0 * P0  # Pa
+            rho_infty = p_infty / (R* T_infty)
+            
+            #### End of initial conditions ####
+            
+            # Derived properties
+            a_infty = np.sqrt(gamma * R * T_infty)
+            V_infty = a_infty * M_infty
+            
+
+            # Plotting the geometry # 
+            plt.plot(x_wave,y_wave)
+            plt.xlabel("X[m]", fontsize = 16)
+            plt.ylabel("Y[m]", fontsize = 16)
+            plt.title("Wavy Section Geometry",fontsize = 24)
+            plt.grid()
+            plt.show()
+            
+            
+            
+            # ====== SYMBOLIC MATHEMATICS ====== #
+            
+            dy_dx = sp.diff(y_equation, x_variable)
+            V_infty_variable = sp.Symbol("V_infty_variable")
+            B_variable = sp.Symbol("B_variable")
+            
+            dphi_dy_wall = dy_dx * V_infty_variable
+            df_dx = dphi_dy_wall / -sp.sqrt(B_variable)
+            
+            # Integration with phase correction
+            C = sp.Symbol('C')
+            y_variable = sp.Symbol('y_variable')
+            f_indefinite = sp.integrate(df_dx, x_variable) + C
+            phi_xy = sp.simplify(f_indefinite).subs(x_variable, x_variable - B_variable * y_variable)
+            
+            # Defining general equation with constant # 
+            phi_xy_general = phi_xy
+            phi_xy_wall = phi_xy_general.subs(y_variable, 0)
+            
+            dphi_dx = sp.diff(phi_xy_general, x_variable)
+            dphi_dy = sp.diff(phi_xy_general, y_variable)
+            
+            Cp = ((-2/V_infty_variable) * dphi_dx)
+            Cp_wall = Cp.subs(y_variable, 0)
+            
+            # Finding Values from the velocity potential equations # 
+            u_prime = dphi_dx
+            v_prime = dphi_dy
+            V_x = V_infty_variable + u_prime
+            V_y = v_prime
+            
+            # Pritning symbolic results # 
+            print("=="*20)
+            pprint(f"{case_key}")
+            pprint(Cp_wall)
+            print("=="*20)
+            print("\n")
+            
+            # ====== CREATE NUMERICAL FUNCTIONS ====== #
+
+            
+            # CRITICAL: Wall shape function
+            y_wall_func = sp.lambdify(x_variable, y_equation.subs([(h_variable, h), (l_variable, l)]), 'numpy')
+            
+            # f_indefinite function (5 parameters)
+            f_indefinite_func = sp.lambdify((x_variable, h_variable, l_variable, V_infty_variable, B_variable, C), 
+                                             f_indefinite, 'numpy')
+            
+            # Velocity potential functions (7 parameters)
+            phi_xy_general_func = sp.lambdify((x_variable, y_variable, h_variable, l_variable, V_infty_variable, B_variable, C), 
+                                               phi_xy_general, 'numpy')
+            
+            phi_xy_wall_func = sp.lambdify((x_variable, h_variable, l_variable, V_infty_variable, B_variable, C),
+                                            phi_xy_wall, 'numpy')
+            
+            # Partial derivative functions (7 parameters)
+            dphi_dx_func = sp.lambdify((x_variable, y_variable, h_variable, l_variable, V_infty_variable, B_variable), 
+                                        dphi_dx, 'numpy')
+            
+            dphi_dy_func = sp.lambdify((x_variable, y_variable, h_variable, l_variable, V_infty_variable, B_variable), 
+                                        dphi_dy, 'numpy')
+            
+            # Pressure coefficient functions
+            Cp_func = sp.lambdify((x_variable, y_variable, h_variable, l_variable, V_infty_variable, B_variable), 
+                                   Cp, 'numpy')
+            
+            Cp_wall_func = sp.lambdify((x_variable, h_variable, l_variable, V_infty_variable, B_variable),
+                                        Cp_wall, 'numpy')
+            
+            # Velocity perturbation functions
+            u_prime_func = sp.lambdify((x_variable, y_variable, h_variable, l_variable, V_infty_variable, B_variable), 
+                                        u_prime, 'numpy')
+            
+            v_prime_func = sp.lambdify((x_variable, y_variable, h_variable, l_variable, V_infty_variable, B_variable), 
+                                        v_prime, 'numpy')
+            
+            # Total velocity component functions
+            V_x_func = sp.lambdify((x_variable, y_variable, h_variable, l_variable, V_infty_variable, B_variable), 
+                                    V_x, 'numpy')
+            
+            V_y_func = sp.lambdify((x_variable, y_variable, h_variable, l_variable, V_infty_variable, B_variable), 
+                                    V_y, 'numpy')
+            
+
+            
+            # ================================================================
+            # SECTION 2: NUMERICAL COMPUTATION AND VISUALIZATION
+            # ================================================================
+     
+        
+            
+            
+            # ====== ZONE OF INFLUENCE ====== #
+            
+            
+            
+               
+            # ====== DOMAIN ====== #
+            
+            x_min, x_max = 0, l
+            y_min = -h - 0.01
+            y_max = 0.3
+            
+            x_grid = np.linspace(x_min, x_max, 150)
+            y_grid = np.linspace(y_min, y_max, 150)
+            X_grid, Y_grid = np.meshgrid(x_grid, y_grid)
+            
+
+            phi_corrected = compute_phi_corrected(X_grid, Y_grid, f_indefinite_func, y_wall_func, 
+                                                  np.sqrt(B), l, h, V_infty, B, 5)
+            
+            # Velocity components
+            dx = x_grid[1] - x_grid[0]
+            dy = y_grid[1] - y_grid[0]
+            
+            u_prime = np.gradient(phi_corrected, dx, axis=1)
+            v_prime = np.gradient(phi_corrected, dy, axis=0)
+            
+            u_total = V_infty + u_prime
+            v_total = v_prime
+            V_total = np.sqrt(u_total**2 + v_total**2)
+            
+            # Pressure coefficient
+            Cp_grid = (-2/V_infty) * u_prime
+            
+            # Pressure
+            pressure_ratio = 1 + (gamma * M_infty**2 / 2) * Cp_grid
+            P_local = p_infty * pressure_ratio
+            
+            # Temperature (linearized)
+            temperature_ratio = 1 - (gamma - 1) * M_infty**2 * Cp_grid / 2
+            temperature_ratio = np.clip(temperature_ratio, 0.5, 2.0)
+            T_local = T_infty * temperature_ratio
+            
+            # Mach number
+            M_local = V_total / a_infty
+            
+            # Mask below wall
+            mask = np.zeros_like(X_grid, dtype=bool)
+            for i, x_val in enumerate(x_grid):
+                y_wall_at_x = y_wall_func(x_val)
+                mask[:, i] = Y_grid[:, i] >= y_wall_at_x
+            
+            Cp_masked = np.where(mask, Cp_grid, np.nan)
+            P_masked = np.where(mask, P_local, np.nan)
+            M_masked = np.where(mask, M_local, np.nan)
+            
+
+            
+ 
+            n = 500 # number of points 
+            wall_x_sources = get_wall_critical_points(l, n)
+            wall_y_sources = y_wall_func(wall_x_sources)
+            
+
+
+        
+            """
+            #------------------------------------------------------------------------------------------------------------------------------------#
+                                                Comparing small perturbations theory with RANS Simulation
+            #------------------------------------------------------------------------------------------------------------------------------------#
+            """
+            ### %Comparing Small perturbation theory with RANS viscous simulations amoung all cases ###
+        
+        
+        
+            # Masking to the desired points [0,0.1]
+            x_wall_RANS = ds_by_case[case_key]["X"].data 
+            x_min = 0 
+            x_max = l
+            mask = (x_min < x_wall_RANS) & (x_wall_RANS < x_max)
+        
+            # Defining pressure and y at the wall based on the mask
+            P_wall_RANS = ds_by_case[case_key]["P"].data[mask]
+            y_wall_RANS = ds_by_case[case_key]["Y"].data[mask] 
+            x_wall_RANS = x_wall_RANS[mask]
+        
+        
+            # Define points along the wall
+            x_wall = np.linspace(0, l, len(P_wall_RANS))
+            y_wall = y_wall_func(x_wall)
+        
+            Cp_wall_results = Cp_wall_func(x_wall, h, l, V_infty, B)
+            P_wall = Cp_wall_results*0.5*rho_infty*V_infty**2 + p_infty
+            P_diff = (np.abs(P_wall_RANS - P_wall) / P_wall_RANS) * 100
+        
+        
+            # Computing torque for both cases #
+            R = 0 # No torque is actually be extraced here. 
+            hl_RANS = compute_torque_2D_norm(x_wall_RANS, y_wall_RANS, P_wall_RANS, R)
+            hl_smallPert = compute_torque_2D_norm(x_wall, y_wall, P_wall, R)
+            
+            # Computing the axial force 
+            axialForce_RANS = hl_RANS['F_theta']
+            axialForce_smallPert = hl_smallPert['F_theta']
+            
+            
+            if plotting == True:
+                ##### Creating Plots ###### 
+                
+                # Imposing figure axes # 
+                fig, (ax1,ax2) = plt.subplots(1,2,figsize = (10, 6))
+                
+                
+                # Plot on ax1 (P vs X) #
+                ax1.plot(x_wall_RANS, P_wall_RANS, label="RANS", linewidth = 3)
+                ax1.plot(x_wall, P_wall, label="Small Perturbation", linestyle='--', linewidth = 3)
+                ax1.set_title(f"{case_key}: $P_{{wall}}$ Vs X", fontsize=14)
+                ax1.set_xlabel("X [m]", fontsize=12)
+                ax1.set_ylabel(r"$P_{wall}$ [Pa]", fontsize=12)
+                ax1.grid(True, which="both", alpha=0.3)
+                ax1.legend()
+                
+            
+            
+                # P_difference Vs X Plot ax2 # 
+                ax2.plot(x_wall, P_diff)
+                ax2.set_xlim([0,l])
+                ax2.set_title(r"$P_{difference}$ Vs X", fontsize = 24)
+            
+                ax2.set_xlabel("X [m]", fontsize = 18)
+                ax2.set_ylabel(r"$P_{difference}$[%]", fontsize = 18) 
+            
+                ax2.grid(True, which = "both")
+                ax2.legend()
+                
+            
+      
+            
+            # Scaling the axial force from RANS with the axial force from small perturbation theory # 
+            axialForceScaled[case_key] = axialForce_RANS / axialForce_smallPert 
+            
+
+            # Computing the axial force from small perturbation theory # 
+            axialForce_diff =  (1 - (axialForce_RANS / axialForce_smallPert)) * 100
+            results_list.append({
+                'h/l': h_l,
+                'M_infty': M_infty,
+                'F_axial_RANS [N/m]': axialForce_RANS,
+                'F_axial_SmallPert [N/m]': axialForce_smallPert,
+                'Difference [%]': axialForce_diff,
+                'Case_Key': case_key
+            })
+            
+            
+
+            
+            
+            # Convert list of dictionaries to DataFrame
+            df_results = pd.DataFrame(results_list)
+
+            pivot_table = df_results.pivot_table(
+                values='Difference [%]',
+                index='h/l',
+                columns='M_infty',
+                aggfunc='mean'  # In case of duplicates
+            )
+            
+            # Exporting Table into excel that compares M\infty Axial force, percentage difference, and the case. # 
+            df_results.to_csv(r'C:\Users\hhsabbah\Documents\01_Bladeless_Proj\32_Geometry Code\Graphs\axial_force_comparison.csv', index=False)
+            pivot_table.to_csv(r'C:\Users\hhsabbah\Documents\01_Bladeless_Proj\32_Geometry Code\Graphs\axial_force_pivot.csv') 
+
+                    
+            plt.show()
+            
+    return axialForceScaled
