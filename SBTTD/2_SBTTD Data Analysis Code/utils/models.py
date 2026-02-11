@@ -8,7 +8,7 @@ import sympy as sp
 from sympy import symbols, init_printing, Integral, sqrt, pprint, simplify
 from pygasflow import isentropic_solver
 from scipy.optimize import fsolve
-
+from utils.plotting import plotter, plotter_multi_all, plotter_multiPerCase, subplotter, plot_scaled_axialForce_vs_hl
 
 """
 #------------------------------------------------------------------------------------------------------------------------------------#
@@ -1294,3 +1294,246 @@ def smallPertSolver(h_l_values, ds_by_case, plotting = False):
             plt.show()
             
     return axialForceScaled
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+#%%
+
+
+
+# === Separation/Attachment from sign of Tau_x (no splines), ignoring edge pairs ===
+import re
+import numpy as np
+import matplotlib.pyplot as plt
+from collections import defaultdict
+
+# --- helpers ---
+def get_hl(section_key: str):
+    # First try numeric pattern: h_l_0.180
+    m = re.search(r'h_l_([0-9.]+)', section_key)
+    if m:
+        return float(m.group(1))
+    
+    # Then check for h_l_x pattern (return a placeholder value or string)
+    if 'h_l_x' in section_key:
+        return 'x'  # or return a specific numeric value if you know what h/L this represents
+    
+    return None
+
+
+
+def x_at_zero(i, x, y):# What is this ????
+    """Linear interpolation of zero between samples i and i+1."""
+    x0, x1 = x[i], x[i+1]
+    y0, y1 = y[i], y[i+1]
+    if y1 == y0:
+        return x0  # plateau fallback
+    t = y0 / (y0 - y1)
+    return x0 + t * (x1 - x0)
+
+# --- outputs (your names) --- #
+idx_separation = {}
+x_sep_points = {}
+x_all = {}
+sep_location = {}
+tau_w_zeros = {}
+
+sep_length = {}
+sep_length_nonDim = {}
+
+x_attach = {}
+y_attach = {}
+
+
+x_sep = {}
+y_sep = {}
+
+
+def find_sepLength(ds_by_case,x,tau_x):
+    # --- main loop ---
+    for section_key in ds_by_case:
+        if get_hl(section_key) is None:
+            continue
+    
+    
+        # sign of tau: negative segments define separated regions
+        
+        neg = tau_x[section_key] < 0
+        edge = np.diff(neg.astype(np.int8))
+    
+        # +1: +→- (enter negative) = SEP,  -1: -→+ (exit negative) = ATTACH
+        i_sep    = np.where(edge == +1)[0]
+        i_attach = np.where(edge == -1)[0]
+    
+        # interpolate exact zero x-positions
+        x_sep_i    = np.array([x_at_zero(i, x[section_key], tau_x[section_key]) for i in i_sep], dtype=float)
+        x_attach_i = np.array([x_at_zero(i, x[section_key], tau_x[section_key]) for i in i_attach], dtype=float)
+    
+        # handle boundary negatives (start/end inside a negative interval)
+        if neg[0]:
+            if x_sep_i.size == 0 or (x_attach_i.size and x_attach_i[0] < x_sep_i[0]):
+                x_sep_i = np.r_[x[section_key][0], x_sep_i]
+        if neg[-1]:
+            if x_attach_i.size == 0 or (x_sep_i.size and x_sep_i[-1] > x_attach_i[-1]):
+                x_attach_i = np.r_[x_attach_i, x[section_key][-1]]
+    
+        # pair in order (guaranteed alternating by construction)
+        n = min(x_sep_i.size, x_attach_i.size)
+        x_sep_i, x_attach_i = x_sep_i[:n], x_attach_i[:n]
+    
+        # --------- NEW: drop first/last pairs if they touch the domain edges ---------
+        if n > 0:
+            xmin, xmax = x[section_key][0], x[section_key][-1]
+            xrng = max(xmax - xmin, 1.0)
+            tol = 1e-6 * xrng  # tolerance for "at the boundary"
+    
+            # drop leading boundary pair
+            if abs(x_sep_i[0] - xmin) <= tol or abs(x_attach_i[0] - xmin) <= tol:
+                x_sep_i    = x_sep_i[1:]
+                x_attach_i = x_attach_i[1:]
+                n = min(x_sep_i.size, x_attach_i.size)
+    
+            # drop trailing boundary pair
+            if n > 0 and (abs(x_sep_i[-1] - xmax) <= tol or abs(x_attach_i[-1] - xmax) <= tol):
+                x_sep_i    = x_sep_i[:-1]
+                x_attach_i = x_attach_i[:-1]
+                n = min(x_sep_i.size, x_attach_i.size)
+        # ---------------------------------------------------------------------------
+    
+        # store sets
+        x_sep[section_key]    = x_sep_i
+        y_sep[section_key]    = np.zeros_like(x_sep_i)
+        x_attach[section_key] = x_attach_i
+        y_attach[section_key] = np.zeros_like(x_attach_i)
+    
+        # all zero-locations (for plotting like before)
+        if n > 0:
+            x0_all = np.sort(np.concatenate([x_sep_i, x_attach_i]))
+        else:
+            x0_all = np.array([], dtype=float)
+        sep_location[section_key] = x0_all
+        tau_w_zeros[section_key]  = np.zeros_like(x0_all)
+    
+        # separation length (sum of SEP→ATTACH spans)
+        sep_len = float(np.sum(np.abs(x_sep_i - x_attach_i))) if n > 0 else 0.0
+        sep_length[section_key] = sep_len
+        sep_length_nonDim[section_key] = (sep_len / x[section_key][-1]) if x[section_key].size else np.nan
+    
+        # optional: index-based separation mask in cleaned data
+        idx_separation[section_key] = np.where(tau_x[section_key] <= 0)[0]
+    
+        # keep alias if you use it elsewhere
+        x_sep_points[section_key] = x_sep_i
+    
+        # ---- Plotting results  ----
+        
+        fig , ax = plotter(x[section_key],tau_x[section_key],"X",r"$\tau_x$",'[m]','[Pa]', return_axes = True)
+        ax.axhline(y = 0, linestyle = '--', color = 'Black')
+        
+        # plotting the scatter plot # 
+        if x_sep_i.size:
+            ax.scatter(x_sep_i, np.zeros_like(x_sep_i), color='red', s=36, label='SEP', zorder=3)
+        if x_attach_i.size:
+            ax.scatter(x_attach_i , np.zeros_like(x_attach_i), color='green', s=36, label='ATTACH', zorder=3)
+            
+            
+          
+        #plt.axhline(0, linestyle='--', color='black', label='Separation Line')
+        #plt.legend(bbox_to_anchor=(1.05, 1), loc='upper right', borderaxespad=0.)
+        #plt.grid(True, which="both")
+        #plt.title(rf"$\tau_x$ vs X [in]: {section_key}")
+        #plt.ylabel(r"$\tau_x$ [Pa]")
+        #plt.xlabel("X [m]")
+        #plt.tight_layout()
+        #plt.show()
+    return sep_length, sep_length_nonDim
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+"""
+#------------------------------------------------------------------------------------------------------------------------------------#
+                                                Finding MAXIMAS AND MINIMAS OF THE GEOMETRY 
+#------------------------------------------------------------------------------------------------------------------------------------#
+"""
+# Prior to plotting results, I am going to find the maximas and minimas to accurately represent the separation length
+# The definition of the separation length will be the separation length of the second wave
+# To do so, the maximas and minimas of each respective geometry will be found and evaluated.
+
+import numpy as np
+import matplotlib.pyplot as plt
+from scipy.signal import find_peaks  # <-- simple peak/valley finder
+
+# --- Pre-allocating Dictionaries ---
+
+# In mm
+y_max, x_max = {}, {}
+y_min, x_min = {}, {}
+
+# In inches
+x_max_in, y_max_in = {}, {}
+x_min_in, y_min_in = {}, {}
+
+# Unit conversion
+
+
+
+def max_min_finder(ds_by_case,x,y):
+# Using a for loop to find the y_max and x_max of each respective geometry
+    for section_key in ds_by_case:
+  
+        # SIMPLE peak picking
+        i_max, _ = find_peaks(y)       # local maxima
+        i_min, _ = find_peaks(-y)      # local minima
+    
+        # (If you need a tiny bit more robustness, uncomment one of these one-liners)
+        # i_max, _ = find_peaks(y_all, distance=20)                       # enforce min spacing
+        # i_max, _ = find_peaks(y_all, prominence=0.05*np.ptp(y_all))     # ignore tiny ripples
+        # i_max, _ = find_peaks(y_all, plateau_size=1)                    # detect flat tops
+        # i_min, _ = find_peaks(-y_all, distance=20)
+        # i_min, _ = find_peaks(-y_all, prominence=0.05*np.ptp(y_all))
+        # i_min, _ = find_peaks(-y_all, plateau_size=1)
+    
+        # store mm
+        y_max[section_key] = y[i_max]
+        x_max[section_key] = x[i_max] 
+        #x_max[pressure_key] = 0.015
+        y_min[section_key] = y[i_min]
+        x_min[section_key] = x[i_min]
+    return x_max, x_min, y_max, y_min
+
+
+
+
+print(x_max)
+
+
+

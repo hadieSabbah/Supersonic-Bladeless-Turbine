@@ -11,7 +11,7 @@ from pathlib import Path
 
 # Defining all figure sizes #
 
-def plotter(x, y, x_string, y_string, unit_x, unit_y, save = True, return_axes = False):
+def plotter(x, y, x_string, y_string, unit_x, unit_y, save = False, return_axes = False):
     # Set publication-quality parameters
     mpl.rcParams['font.family'] = 'serif'
     mpl.rcParams['font.serif'] = ['Times New Roman']  # Or 'DejaVu Serif'
@@ -271,7 +271,7 @@ def plot_scaled_axialForce_vs_hl(results_dict, h_l_values, save=False):
     ax.set_xlabel('h/l')
     ax.set_ylabel(r'$F_{RANS} / F_{Small Pert}$')
     ax.set_title('Scaled Axial Force vs h/l\n(Varying Mach Number)')
-    ax.legend(title='Mach Number', loc='best', frameon=False)
+    ax.legend(title='Mach Number', loc='best', frameon=False, boarderaxespad = 0.1)
     ax.grid(True, alpha=0.3)
     
     # Add horizontal line at y=1 for reference
@@ -879,7 +879,7 @@ def mass_flux_imbalance_analyzer(root_dir=None, file_name_total="minfo1_e1",
         ax.grid(True, which="both", alpha=0.35)
         
         if plotted:
-            ax.legend(title="Cases", loc="center left", bbox_to_anchor=(1.02, 0.5))
+            ax.legend(title="Cases", loc="center left", bbox_to_anchor=(1.02, 0.5), borderaxespad = 0.1)
         else:
             print("No curves plotted — check the messages above for which cases were skipped.")
         
