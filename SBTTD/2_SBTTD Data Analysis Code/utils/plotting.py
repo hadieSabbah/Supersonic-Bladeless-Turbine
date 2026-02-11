@@ -440,7 +440,7 @@ def plotter_multiPerCase(x_dict, y_dict, x_string, y_string, unit_x, unit_y,
     ax.set_title(figure_string_title)
     ax.set_xlabel(x_string_label)
     ax.set_ylabel(y_string_label)
-    ax.legend(frameon=False, bbox_to_anchor=(1.12,1))
+    ax.legend(frameon=False, bbox_to_anchor=(1.05,1), borderaxespad = 0.1, loc = "best")
     ax.grid(True, alpha=0.3)
     
     plt.tight_layout()
