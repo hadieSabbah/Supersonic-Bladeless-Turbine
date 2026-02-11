@@ -1347,10 +1347,9 @@ def x_at_zero(i, x, y):# What is this ????
     t = y0 / (y0 - y1)
     return x0 + t * (x1 - x0)
 
-# --- outputs (your names) --- #
+# --- Pre-Allocating Variables  --- #
 idx_separation = {}
 x_sep_points = {}
-x_all = {}
 sep_location = {}
 tau_w_zeros = {}
 
@@ -1365,7 +1364,7 @@ x_sep = {}
 y_sep = {}
 
 
-def find_sepLength(ds_by_case,x,tau_x):
+def find_sepLength(ds_by_case,x,tau_x, plot_results = False):
     # --- main loop ---
     for section_key in ds_by_case:
         if get_hl(section_key) is None:
@@ -1443,14 +1442,15 @@ def find_sepLength(ds_by_case,x,tau_x):
     
         # ---- Plotting results  ----
         
-        fig , ax = plotter(x[section_key],tau_x[section_key],"X",r"$\tau_x$",'[m]','[Pa]', return_axes = True)
-        ax.axhline(y = 0, linestyle = '--', color = 'Black')
-        
-        # plotting the scatter plot # 
-        if x_sep_i.size:
-            ax.scatter(x_sep_i, np.zeros_like(x_sep_i), color='red', s=36, label='SEP', zorder=3)
-        if x_attach_i.size:
-            ax.scatter(x_attach_i , np.zeros_like(x_attach_i), color='green', s=36, label='ATTACH', zorder=3)
+        if plot_results:
+            fig , ax = plotter(x[section_key],tau_x[section_key],"X",r"$\tau_x$",'[m]','[Pa]', return_axes = True)
+            ax.axhline(y = 0, linestyle = '--', color = 'Black')
+            
+            # plotting the scatter plot # 
+            if x_sep_i.size:
+                ax.scatter(x_sep_i, np.zeros_like(x_sep_i), color='red', s=36, label='SEP', zorder=3)
+            if x_attach_i.size:
+                ax.scatter(x_attach_i , np.zeros_like(x_attach_i), color='green', s=36, label='ATTACH', zorder=3)
             
             
           
@@ -1462,7 +1462,7 @@ def find_sepLength(ds_by_case,x,tau_x):
         #plt.xlabel("X [m]")
         #plt.tight_layout()
         #plt.show()
-    return sep_length, sep_length_nonDim
+    return sep_length, sep_length_nonDim, x_sep, y_sep, x_attach, y_attach
 
 
 
@@ -1511,8 +1511,8 @@ def max_min_finder(ds_by_case,x,y):
     for section_key in ds_by_case:
   
         # SIMPLE peak picking
-        i_max, _ = find_peaks(y)       # local maxima
-        i_min, _ = find_peaks(-y)      # local minima
+        i_max, _ = find_peaks(y[section_key])       # local maxima
+        i_min, _ = find_peaks(-y[section_key])      # local minima
     
         # (If you need a tiny bit more robustness, uncomment one of these one-liners)
         # i_max, _ = find_peaks(y_all, distance=20)                       # enforce min spacing
@@ -1522,18 +1522,16 @@ def max_min_finder(ds_by_case,x,y):
         # i_min, _ = find_peaks(-y_all, prominence=0.05*np.ptp(y_all))
         # i_min, _ = find_peaks(-y_all, plateau_size=1)
     
-        # store mm
-        y_max[section_key] = y[i_max]
-        x_max[section_key] = x[i_max] 
+    
+        # Storing Results # 
+        y_max[section_key] = y[section_key][i_max]
+        x_max[section_key] = x[section_key][i_max] 
         #x_max[pressure_key] = 0.015
-        y_min[section_key] = y[i_min]
-        x_min[section_key] = x[i_min]
+        y_min[section_key] = y[section_key][i_min]
+        x_min[section_key] = x[section_key][i_min]
     return x_max, x_min, y_max, y_min
 
 
-
-
-print(x_max)
 
 
 

@@ -25,7 +25,7 @@ os.chdir(new_dirc)
 from utils.parameterComputation import variableImporterMasked, ReCompute, yplusThreshold
 from utils.dataload_util import assign_dir, bigImport, runSaver, runLoader, file_pathFinder, load_minfo_step_force
 from utils.plotting import plotter, plotter_multi_all, plotter_multiPerCase, subplotter, plot_scaled_axialForce_vs_hl
-from utils.models import analyze_geometries, get_first_shock_pressures, offsetGeomPoints, smallPertSolver, find_sepLength
+from utils.models import analyze_geometries, get_first_shock_pressures, offsetGeomPoints, smallPertSolver, find_sepLength, max_min_finder
 
 #%%
 ### Connecting to the session # 
@@ -687,7 +687,7 @@ for key in x.keys():
 
 
 # === Separation/Attachment from sign of Tau_x (no splines), ignoring edge pairs ===
-sep_length, sep_length_nonDim = find_sepLength(ds_by_case,x,tau_x)
+sep_length, sep_length_nonDim, x_sep, y_sep, x_attach, y_attach = find_sepLength(ds_by_case,x,tau_x)
 
 
 #%% 
@@ -746,59 +746,9 @@ for section_key in ds_by_case:
 """
 # Prior to plotting results, I am going to find the maximas and minimas to accurately represent the separation length
 # The definition of the separation length will be the separation length of the second wave
-# To do so, the maximas and minimas of each respective geometry will be found and evaluated.
+# To do so, the maximas and minimas of each respective geometry will be found.
 
-import numpy as np
-import matplotlib.pyplot as plt
-from scipy.signal import find_peaks  # <-- simple peak/valley finder
-
-# --- Pre-allocating Dictionaries ---
-
-# In mm
-y_max, x_max = {}, {}
-y_min, x_min = {}, {}
-
-# In inches
-x_max_in, y_max_in = {}, {}
-x_min_in, y_min_in = {}, {}
-
-# Unit conversion
-
-
-# Using a for loop to find the y_max and x_max of each respective geometry
-for pressure_key in ds_by_case:
-
-    # --- Units in mm ---
-    x_all = np.asarray(ds_by_case[pressure_key]["X"].data)
-    y_all = np.asarray(ds_by_case[pressure_key]["Y"].data)
-
-    # clean + sort by x so indices run left→right
-    mask = np.isfinite(x_all) & np.isfinite(y_all)
-    x_all, y_all = x_all[mask], y_all[mask]
-    order = np.argsort(x_all)
-    x_all, y_all = x_all[order], y_all[order]
-
-    # SIMPLE peak picking
-    i_max, _ = find_peaks(y_all)       # local maxima
-    i_min, _ = find_peaks(-y_all)      # local minima
-
-    # (If you need a tiny bit more robustness, uncomment one of these one-liners)
-    # i_max, _ = find_peaks(y_all, distance=20)                       # enforce min spacing
-    # i_max, _ = find_peaks(y_all, prominence=0.05*np.ptp(y_all))     # ignore tiny ripples
-    # i_max, _ = find_peaks(y_all, plateau_size=1)                    # detect flat tops
-    # i_min, _ = find_peaks(-y_all, distance=20)
-    # i_min, _ = find_peaks(-y_all, prominence=0.05*np.ptp(y_all))
-    # i_min, _ = find_peaks(-y_all, plateau_size=1)
-
-    # store mm
-    y_max[pressure_key] = y_all[i_max]
-    x_max[pressure_key] = x_all[i_max] 
-    #x_max[pressure_key] = 0.015
-    y_min[pressure_key] = y_all[i_min]
-    x_min[pressure_key] = x_all[i_min]
-
-
-print(x_max)
+x_max, x_min, y_max, y_min = max_min_finder(ds_by_case,x,y)
 
 #%%
 
