@@ -6,7 +6,6 @@ import tecplot as tp
 import os 
 
 
-
 """
 #------------------------------------------------------------------------------------------------------------------------------------#
                                                     Data importing and exporting
@@ -14,9 +13,14 @@ import os
 
 """
 
+
+
 # Automaticalyl changing the working directory # 
 new_dirc = r"C:\Users\hhsabbah\Documents\01_Bladeless_Proj\35_Git\Supersonic-Bladeless-Turbine\SBTTD\2_SBTTD Data Analysis Code"
 os.chdir(new_dirc)
+
+
+
 #%%
 
 # Importing modules # 
@@ -25,7 +29,8 @@ os.chdir(new_dirc)
 from utils.parameterComputation import variableImporterMasked, ReCompute, yplusThreshold
 from utils.dataload_util import assign_dir, bigImport, runSaver, runLoader, file_pathFinder, load_minfo_step_force
 from utils.plotting import plotter, plotter_multi_all, plotter_multiPerCase, subplotter, plot_scaled_axialForce_vs_hl
-from utils.models import analyze_geometries, get_first_shock_pressures, offsetGeomPoints, smallPertSolver, find_sepLength, max_min_finder
+from utils.models import analyze_geometries, get_first_shock_pressures, offsetGeomPoints, smallPertSolver, find_sepLength, max_min_finder,mach_vs_sepLength, smallPertSolver_with_SE, smallPertSolver_combined
+
 
 #%%
 ### Connecting to the session # 
@@ -74,23 +79,114 @@ max_l = 0.1
 # Data at the wall masked #
 y_plus, tau_x, tau_y, tau_separation, tau_separation_idx, \
 x, y, T, P, Px, Py, P0, rho, mach, \
-omega_z, u, v, q_dot, mu_tur = \
+omega_z, u, v, q_dot = \
     variableImporterMasked(ds_by_case, min_l, max_l)
 
 # Data at the entire quadrant # 
 y_plus_quad, tau_x_quad, tau_y_quad, tau_separation_quad, tau_separation_idx_quad, \
 x_quad, y_quad, T_quad, P_quad, Px_quad, Py_quad, P0_quad, rho_quad, mach_quad, \
-omega_z_quad, u_quad, v_quad, q_dot_quad, mu_tur_quad = \
+omega_z_quad, u_quad, v_quad, q_dot_quad = \
     variableImporterMasked(ds_by_case_quad, 0, 0, mask_input = False)
 
 # Data at the inlet # 
 y_plus_inlet, tau_x_inlet, tau_y_inlet, tau_separation_inlet, tau_separation_idx_inlet, \
 x_inlet, y_inlet, T_inlet, P_inlet, Px_inlet, Py_inlet, P0_inlet, rho_inlet, mach_inlet, \
-omega_z_inlet, u_inlet, v_inlet, q_dot_inlet, mu_tur_inlet = \
+omega_z_inlet, u_inlet, v_inlet, q_dot_inlet = \
     variableImporterMasked(ds_by_case_inlet, 0, 0, mask_input = False)
     
+
+
+
+#%% 
+"""
+#------------------------------------------------------------------------------------------------------------------------------------#
+                            Computing the shear stress at the wall and saving it as a dictionary
+#------------------------------------------------------------------------------------------------------------------------------------#
+
+"""
+
+# Pre-allocating variable # 
+tau_wall = {}
+
+
+for section_key in ds_by_case:
+    
+    # Getting discrete points from the geometry # 
+    dx = np.gradient(x[section_key])
+    dy = np.gradient(y[section_key])
     
     
+    # Computing the normal unit tangent # 
+    ds = np.sqrt(dx**2 + dy**2)
+    tx = dx / ds
+    ty = dy / ds
+    
+    # Getting the shear stress at the wall # 
+    tau_wall[section_key] = tau_x[section_key] * tx + tau_y[section_key] * ty
+    
+    
+
+
+#%% Exporting Corodinates for the hoes ####
+
+
+
+def saveTxtSW2D(x,y,output_dir):
+    
+    z = np.zeros(len(x))
+    # Store
+    points_xyz = np.column_stack([x, y + 0.01, z])
+
+    # Export individual curve .txt file (SolidWorks XYZ format)
+    filename = "h_l_0_02_curve_mm.txt"
+    filepath = os.path.join(output_dir, filename)
+    np.savetxt(filepath, points_xyz, fmt='%.6f', delimiter='\t')
+       
+        
+
+# Saving as txt # 
+saveTxtSW2D(x['h_l_0.02_Mach_2.0'],y['h_l_0.02_Mach_2.0'], r"C:\Users\hhsabbah\Documents\01_Bladeless_Proj\34_Hannah Proejct")
+#%%
+
+"""
+Simple Variable Checker
+=======================
+Find which cases are missing a specific variable.
+"""
+
+def find_missing_cases(ds_by_case, variable_name):
+    """
+    Return list of case names that are missing the specified variable.
+    
+    Parameters
+    ----------
+    ds_by_case : dict
+        Your dictionary of cases
+    variable_name : str
+        The variable to check for (e.g., "Mutur", "Qdot", "P_total")
+    
+    Returns
+    -------
+    list
+        Case names missing the variable
+    """
+    missing = []
+    for case in ds_by_case:
+        if variable_name not in ds_by_case[case].keys():
+            missing.append(case)
+    return missing
+
+
+# Example usage:
+# missing = find_missing_cases(ds_by_case, "Mutur")
+# print(f"Cases missing Mutur: {missing}")
+
+
+
+
+# Function to print the cases with missing variables # 
+missing = find_missing_cases(ds_by_case, "P_total")
+print(missing)  # ['M2.0_P0_0.5', 'M3.0_P0_1.2', ...]
     
     
     
@@ -99,6 +195,32 @@ omega_z_inlet, u_inlet, v_inlet, q_dot_inlet, mu_tur_inlet = \
 
 import numpy as np
 import matplotlib.pyplot as plt
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 def compute_boundary_layer_thickness(x_quad, y_quad, omega_z_quad, rho_quad,
@@ -469,9 +591,9 @@ h_l_list = np.arange(0.02,0.09 + 0.01,0.01)
 for h_l in h_l_list:
     fig, ax = plotter_multiPerCase(
         x_dict=x,
-        y_dict=tau_x,
+        y_dict=tau_wall,
         x_string='x',
-        y_string=r'$\tau_x$',
+        y_string=r'$\tau_{wall}$',
         unit_x='[m]',
         unit_y='[Pa]',
         filter_param='h_l',
@@ -482,6 +604,9 @@ for h_l in h_l_list:
 
         
 
+
+
+#%%
 """
 #------------------------------------------------------------------------------------------------------------------------------------#
                                                                  Plotting y+
@@ -530,7 +655,7 @@ for key in x.keys():
     
     # your arrays
     x_data = x[key]
-    y_data = tau_y[key]
+    y_data = tau_wall[key]
     
     # x, y are your 1D arrays
     s = UnivariateSpline(x_data, y_data, s=0)
@@ -544,10 +669,10 @@ for key in x.keys():
     
     # Getting the separation location and respective tau
     sep_location = [x[key][idx_nearest[k]] for k in range(len(idx_nearest))]
-    tau_y_location = [tau_y[key][idx_nearest[k]] for k in range(len(idx_nearest))]
+    tau_y_location = [tau_wall[key][idx_nearest[k]] for k in range(len(idx_nearest))]
     
     # Use plotter but get fig, ax to add scatter points
-    fig, ax = plotter(x_data, y_data, 'x', r'$\tau_y$', '[m]', '[Pa]', 
+    fig, ax = plotter(x_data, y_data, 'x', r'$\tau_{wall}$', '[m]', '[Pa]', 
                       save=False, return_axes = True)
     
     # Add separation points
@@ -687,7 +812,7 @@ for key in x.keys():
 
 
 # === Separation/Attachment from sign of Tau_x (no splines), ignoring edge pairs ===
-sep_length, sep_length_nonDim, x_sep, y_sep, x_attach, y_attach = find_sepLength(ds_by_case,x,tau_x)
+sep_length, sep_length_nonDim, x_sep, y_sep, x_attach, y_attach = find_sepLength(ds_by_case,x,tau_wall)
 
 
 #%% 
@@ -725,7 +850,7 @@ for section_key in ds_by_case:
     
     # Reynolds Number Vs Boundary layer thickness # 
     #plt.plot(Re_L[section_key] , delta_n_mm[section_key], color = 'black',linewidth = 2)
-    plt.scatter(ds_by_case[section_key]["X"].data[:len(delta_n_mm_3_dict[section_key])], delta_n_mm_3_dict[section_key],label = 'Attached')
+    #plt.scatter(ds_by_case[section_key]["X"].data[:len(delta_n_mm_3_dict[section_key])], delta_n_mm_3_dict[section_key],label = 'Attached')
     #plt.scatter(Re_L_sep , delta_n_mm_sep , color = 'red', label = 'Separated')
     plt.legend()
     
@@ -760,310 +885,12 @@ x_max, x_min, y_max, y_min = max_min_finder(ds_by_case,x,y)
 #------------------------------------------------------------------------------------------------------------------------------------#
 """
 
-
-
-# Plot Re vs Lsep/Lwidth with markers colored by Mach and h/L in the legend
-# Plot Re vs Lsep/Lwidth with markers colored by Mach (1.5–4.5).
-# h/L groups are shown as separate lines with a legend.
-
-# Re vs Lsep/Lwidth with markers colored by Mach (1.5…4.5) and lines per h/L.
-
-# This version avoids regex brittleness by matching known Mach tags directly.
-
-
-import numpy as np
-import re
-from collections import defaultdict
-import matplotlib.pyplot as plt
-import matplotlib.cm as cm
-from matplotlib.colors import BoundaryNorm
-from matplotlib.cm import ScalarMappable
-
-
-
-# ---------------- helpers ---------------- #
-def get_hl(key: str):
-    # Handles negative numbers, decimals, scientific notation
-    m = re.search(r'h[_-]?l[_-]?(-?[0-9]*\.?[0-9]+(?:[eE][-+]?[0-9]+)?)', key, flags=re.I)
-    return float(m.group(1)) if m else None
-
-# Simple & robust Mach extractor:
-# checks for 'mach_1.5', 'mach_2.0', … and also 'mach_1_5' style.
-MACH_LEVELS = np.arange(1.5, 4.5 , 0.5)  # 1.5, 2.0, …, 4.5
-def extract_mach_from_filename(key: str, mach_levels: list) -> float:
-    """
-    Extract Mach number from filename.
-    
-    Args:
-        key: String containing Mach number (e.g., 'h_l_0.030_Mach_1.0' or 'h_l_0.030_Mach_1_5')
-        mach_levels: List of possible Mach values to search for
-    
-    Returns:
-        float: Extracted Mach number or np.nan if not found
-    
-    Examples:
-        >>> extract_mach_from_filename("h_l_0.030_Mach_1.0", [1.0, 1.5, 2.0])
-        1.0
-        >>> extract_mach_from_filename("h_l_0.030_Mach_2_5", [1.0, 1.5, 2.0, 2.5])
-        2.5
-    """
-    s = key.lower()
-    
-    for mv in mach_levels:
-        # Create pattern variations
-        # For mv=2.5: creates "mach_2.5" and "mach_2_5"
-        # For mv=1.0: creates "mach_1.0" and "mach_1_0"
-        tag_dot = f"mach_{mv:.1f}"        # e.g., "mach_2.5"
-        tag_us = tag_dot.replace(".", "_") # e.g., "mach_2_5"
-        
-        # Check if either pattern exists in the filename
-        if tag_dot in s or tag_us in s:
-            return float(f"{mv:.1f}")
-    
-    return np.nan
-
-
-
-
-# ---------------- filter + group by h/L ----------------
-min_hl, max_hl = 0.02, 0.09
-
-keys = ds_by_case.keys()
-filtered_keys = [
-    k for k in keys
-    if (get_hl(k) is not None and min_hl <= get_hl(k) <= max_hl and "Mach_0.5" not in k)
-]
-
-groups = defaultdict(list)
-for k in filtered_keys:
-    groups[get_hl(k)].append(k)
-
-# ---------------- discrete Mach mapping for colorbar ----------------
-# Create discrete bins with boundaries half-way between the levels.
-M0_bounds = np.linspace(1.5, 4.0, len(MACH_LEVELS) + 1)
-cmap_mach = cm.get_cmap("viridis", len(MACH_LEVELS))   # 7 distinct colors
-norm = BoundaryNorm(M0_bounds, cmap_mach.N)
-
-
-
-# line colors per h/L (legend)
-cmap_lines = cm.get_cmap("plasma", len(groups))
-
-# ---------------- plotting ----------------
-fig, ax = plt.subplots(figsize=(8, 6))
-scatter_ref = None
-unmatched = 0
-
-for i, (hl, key_list) in enumerate(sorted(groups.items())):
-    xs, ys, ms = [], [], []
-    print(hl)
-    for k in key_list:
-        if k in Re and k in sep_length_nonDim:
-            
-            # Finding separation legnth after the first wave #
-            
-            
-            # Computing the filtered x_sep and y_sep # 
-            mask_x = (x_sep[k] > x_max[k][0]) & (x_sep[k] < x_max[k][1])
-            mask_y = (y_sep[k] > y_max[k][0]) & (y_sep[k] < y_max[k][1])
-            
-            x_sep_filtered = x_sep[k][mask_x]
-            y_sep_filtered = y_sep[k][mask_y]
-            
-            x_attach_filtered = x_attach[k][mask_x]
-            y_attach_filtered = y_attach[k][mask_y]
-            
-            # Non-dimensionalized Separation Length # 
-            sep_length_nonDim_filtered = np.sum(abs(x_sep_filtered - x_attach_filtered))/(0.1)
-            
-            
-            yval = sep_length_nonDim_filtered
-
-
-            xs.append(Re[k])
-            ys.append(yval)
-
-            dv = extract_mach_from_filename(k,MACH_LEVELS)
-            ms.append(dv)
-            if not np.isfinite(dv):
-                unmatched += 1
-
-    if not xs:
-        continue
-
-    xs = np.asarray(xs); ys = np.asarray(ys); ms = np.asarray(ms)
-
-    # line: use finite x/y, sorted by Re
-    mask_xy = np.isfinite(xs) & np.isfinite(ys)
-    xs_line, ys_line = xs[mask_xy], ys[mask_xy]
-    order = np.argsort(xs_line)
-    ax.plot(xs_line[order], ys_line[order],
-            color=cmap_lines(i), lw=4, label=f"h/L = {hl:.2f}")
-
-    # markers: color by Mach  #
-    mask_col = mask_xy & np.isfinite(ms)
-    if np.any(mask_col):
-        sc = ax.scatter(xs[mask_col], ys[mask_col], c=ms[mask_col],
-                        cmap=cmap_mach, norm=norm,
-                        s=70, marker='o', edgecolor='k', linewidths= 1.35,
-                        zorder=5, alpha=0.98)
-        scatter_ref = sc
-        
-
-        
-        
-        
-    # (Optional) show unmatched as neutral markers so you can spot them
-    mask_neu = mask_xy & ~np.isfinite(ms)
-    if np.any(mask_neu):
-        ax.scatter(xs[mask_neu], ys[mask_neu],
-                   color='white', edgecolor='k', linewidths=0.35,
-                   s=46, marker='o', zorder=4, alpha=0.9)
-
-# ---------------- colorbar with exact Pressure ticks ----------------
-if scatter_ref is not None:
-    cbar = fig.colorbar(scatter_ref, ax=ax, pad=0.02, ticks=MACH_LEVELS)
-    cbar.set_label("Mach Number", fontsize = 18)
-    cbar.ax.tick_params(labelsize = 18)
-else:
-    # fallback colorbar so layout stays stable; also tell you why
-    sm = ScalarMappable(norm=norm, cmap=cmap_mach); sm.set_array([])
-    fig.colorbar(sm, ax=ax, pad=0.02, ticks=MACH_LEVELS).set_label("Mach")
-    print("Warning: no markers received a Mach color. Check key naming.")
-
-
-
-
-# ---------------- cosmetics ----------------
-ax.set_title("Normalized Separation Length vs Reynolds Number", fontsize = 24, pad = 15)
-ax.set_xlabel("Reynolds Number", fontsize = 21)
-ax.set_ylabel(r"$L_{separation}/L_{Length}$", fontsize = 21)
-ax.tick_params(labelsize = 14)
-
-ax.grid(True, which="both")
-ax.legend(title="Cases", loc = 'best', bbox_to_anchor = (0.4, 0.3), fontsize = 12)
-fig.tight_layout()
-plt.show()
-
-# Optional: see how many keys didn’t contain a Mach tag
-if unmatched:
-    print(f"{unmatched} case(s) had no recognizable Mach tag (e.g., 'mach_2.5').")
-    
-    
+mach = mach_vs_sepLength(ds_by_case, x, y, sep_length_nonDim)
 
 #%% Plotting separation length versus Mach number only!
 # Plot Lsep/Lwidth vs Mach Number with lines for each h/L
 
 import numpy as np
-import re
-from collections import defaultdict
-import matplotlib.pyplot as plt
-import matplotlib.cm as cm
-
-# ---------------- helpers ---------------- #
-def get_hl(key: str):
-    m = re.search(r'h[_-]?l[_-]?(-?[0-9]*\.?[0-9]+(?:[eE][-+]?[0-9]+)?)', key, flags=re.I)
-    return float(m.group(1)) if m else None
-
-MACH_LEVELS = np.arange(1.5, 4.5, 0.5)  # 1.5, 2.0, …, 4.0
-
-def extract_mach_from_filename(key: str, mach_levels: list) -> float:
-    s = key.lower()
-    for mv in mach_levels:
-        tag_dot = f"mach_{mv:.1f}"
-        tag_us = tag_dot.replace(".", "_")
-        if tag_dot in s or tag_us in s:
-            return float(f"{mv:.1f}")
-    return np.nan
-
-# ---------------- filter + group by h/L ----------------
-min_hl, max_hl = 0.02, 0.09
-
-keys = ds_by_case.keys()
-filtered_keys = [
-    k for k in keys
-    if (get_hl(k) is not None and min_hl <= get_hl(k) <= max_hl and "Mach_0.5" not in k)
-]
-
-groups = defaultdict(list)
-for k in filtered_keys:
-    groups[get_hl(k)].append(k)
-
-# ---------------- style definitions ----------------
-# Colors for each h/L value
-hl_values = sorted(groups.keys())
-cmap_lines = cm.get_cmap("viridis", len(hl_values))
-
-# Different markers for each h/L
-markers = ['o', 's', '^', 'D', 'v', 'p', 'h', '*']
-
-# ---------------- plotting ----------------
-fig, ax = plt.subplots(figsize=(10, 7))
-
-for i, (hl, key_list) in enumerate(sorted(groups.items())):
-    mach_vals = []
-    sep_lengths = []
-    
-    for k in key_list:
-        if k in Re and k in sep_length_nonDim:
-            
-            # Computing the filtered x_sep and y_sep
-            mask_x = (x_sep[k] > x_max[k][0]) & (x_sep[k] < x_max[k][1])
-            mask_y = (y_sep[k] > y_max[k][0]) & (y_sep[k] < y_max[k][1])
-            
-            x_sep_filtered = x_sep[k][mask_x]
-            y_sep_filtered = y_sep[k][mask_y]
-            
-            x_attach_filtered = x_attach[k][mask_x]
-            y_attach_filtered = y_attach[k][mask_y]
-            
-            # Non-dimensionalized Separation Length
-            sep_length_nonDim_filtered = np.sum(abs(x_sep_filtered - x_attach_filtered)) / 0.1
-            
-            # Extract Mach number
-            mach = extract_mach_from_filename(k, MACH_LEVELS)
-            
-            if np.isfinite(mach) and np.isfinite(sep_length_nonDim_filtered):
-                mach_vals.append(mach)
-                sep_lengths.append(sep_length_nonDim_filtered)
-    
-    if not mach_vals:
-        continue
-    
-    mach_vals = np.asarray(mach_vals)
-    sep_lengths = np.asarray(sep_lengths)
-    
-    # Sort by Mach number for proper line connection
-    order = np.argsort(mach_vals)
-    mach_sorted = mach_vals[order]
-    sep_sorted = sep_lengths[order]
-    
-    # Plot line + markers
-    ax.plot(mach_sorted, sep_sorted,
-            color=cmap_lines(i),
-            marker=markers[i % len(markers)],
-            markersize=12,
-            linewidth=2.5,
-            markeredgecolor='black',
-            markeredgewidth=1.2,
-            label=f"h/l = {hl:.2f}")
-
-# ---------------- formatting ----------------
-ax.set_xlabel("Mach Number", fontsize=21)
-ax.set_ylabel(r"$L_{separation} / L_{length}$", fontsize=21)
-ax.set_title("Normalized Separation Length vs Mach Number", fontsize=28, fontweight='bold')
-ax.tick_params(labelsize=20)
-
-# Set x-axis to show all Mach values
-ax.set_xticks(MACH_LEVELS)
-ax.set_xlim([MACH_LEVELS[0] - 0.2, MACH_LEVELS[-1] + 0.2])
-
-ax.grid(True, alpha=0.3)
-ax.legend(title="h/l", fontsize=12, title_fontsize=14, loc='best')
-
-fig.tight_layout()
-plt.savefig('sep_length_vs_mach.png', dpi=200, bbox_inches='tight')
-plt.show()
 
 
 
@@ -1776,42 +1603,53 @@ plt.savefig('separation_points_subplots.png', dpi=150, bbox_inches='tight')
 plt.show()
 
 
-#%% Attempt 2---
+
+#%%
 
 """
 #------------------------------------------------------------------------------------------------------------------------------------#
-                         Figure A: Summary Line Plot - First Separation Location vs h/l
-                         Figure B: Heatmap - Separation Occurrence Matrix
+         Figure A: Separation Length vs h/l  (uses find_sepLength outputs)
+         Figure B: Heatmap - Separation Occurrence Matrix
+         Figure C: First Separation Location vs h/l (original figure, kept for reference)
 #------------------------------------------------------------------------------------------------------------------------------------#
+
+HOW THIS WORKS:
+===============
+Instead of manually detecting separation from x_sep arrays and filtering by geometry
+maxima (x_max), this version uses the outputs from find_sepLength(), which already does
+the heavy lifting:
+    - sep_length[key]         : total separation length in [m]
+    - sep_length_nonDim[key]  : separation length / domain length (non-dimensional)
+    - x_sep[key]              : array of separation point x-locations
+    - x_attach[key]           : array of reattachment point x-locations
+
+The key insight: find_sepLength() identifies separation as regions where tau_x < 0,
+interpolates exact zero-crossings, and computes the sum of all SEP→ATTACH spans.
+This is more robust than the previous approach of filtering x_sep by geometry maxima.
+
+WHAT YOU NEED TO HAVE RUN BEFORE THIS:
+=======================================
+1. variableImporterMasked()  → gives you x, tau_x, etc.
+2. find_sepLength(ds_by_case, x, tau_x)  → gives you sep_length, sep_length_nonDim,
+                                            x_sep, y_sep, x_attach, y_attach
+
+USAGE:
+======
+    # Step 1: Get your variables
+    y_plus, tau_x, tau_y, ... = variableImporterMasked(ds_by_case, min_l, max_l)
+    
+    # Step 2: Compute separation lengths
+    sep_length, sep_length_nonDim, x_sep, y_sep, x_attach, y_attach = \
+        find_sepLength(ds_by_case, x, tau_x)
+    
+    # Step 3: Run this plotting code (below)
 """
+
 import re
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.lines import Line2D
-
-# --- your helper kept as-is ---
-def y_at_x_on_polyline(x, y, x_star):
-    x = np.asarray(x).ravel()
-    y = np.asarray(y).ravel()
-    good = np.isfinite(x) & np.isfinite(y)
-    x, y = x[good], y[good]
-    xdiff = x - x_star
-    seg_idx = np.where((xdiff[:-1] * xdiff[1:]) <= 0)[0]
-    if seg_idx.size:
-        k = seg_idx
-        x0, x1 = x[k], x[k+1]
-        y0, y1 = y[k], y[k+1]
-        vertical = (x1 == x0)
-        out = np.empty(k.size, float)
-        if np.any(~vertical):
-            t = (x_star - x0[~vertical]) / (x1[~vertical] - x0[~vertical])
-            out[~vertical] = y0[~vertical] + t * (y1[~vertical] - y0[~vertical])
-        if np.any(vertical):
-            out[vertical] = 0.5*(y0[vertical] + y1[vertical])
-        seg_dist = np.minimum(np.abs(xdiff[k]), np.abs(xdiff[k+1]))
-        return out[np.argmin(seg_dist)]
-    j = int(np.argmin(np.abs(xdiff)))
-    return y[j]
+from matplotlib.colors import ListedColormap
 
 # ---- inputs ----
 h_l_values = [0.02, 0.03, 0.04, 0.05, 0.06, 0.07, 0.08, 0.09]
@@ -1837,17 +1675,34 @@ mach_markers = {
 }
 
 # =============================================================================
-# STEP 1: Extract data into organized structure
+# STEP 1: Extract data into organized structure using find_sepLength outputs
 # =============================================================================
-# Dictionary to store results: {mach_val: {'h_l': [...], 'x_sep': [...], 'separates': [...]}}
-results_by_mach = {m: {'h_l': [], 'x_sep': [], 'separates': []} for m in mach_values}
+"""
+TEACHING POINT - Why organize into results_by_mach?
+---------------------------------------------------
+Your raw data is keyed by case name (e.g., "h_l_0.02_Mach_1.5"), but your plots
+need data organized by Mach number (each Mach = one line on the plot).
+
+This step pivots the data from:
+    sep_length["h_l_0.02_Mach_1.5"] = 0.012
+    sep_length["h_l_0.02_Mach_2.0"] = 0.008
+
+To:
+    results_by_mach[1.5] = {'h_l': [0.02, 0.03, ...], 'sep_len': [0.012, 0.015, ...]}
+    results_by_mach[2.0] = {'h_l': [0.02, 0.03, ...], 'sep_len': [0.008, 0.010, ...]}
+
+This is the same pattern you used before, just now pulling from find_sepLength outputs.
+"""
+
+results_by_mach = {m: {'h_l': [], 'sep_len': [], 'sep_len_nonDim': [],
+                        'x_sep_first': [], 'separates': []} for m in mach_values}
 
 for h_l in h_l_values:
     h_l_key = f"h_l_{h_l:.2f}"
     temp_keys = cases_by_hl[h_l_key]
     
     for temp_key in temp_keys:
-        # Parse Mach value
+        # Parse Mach value from the case key
         m = re.search(r"Mach_([0-9]*\.?[0-9]+)", temp_key)
         if not m:
             continue
@@ -1856,130 +1711,152 @@ for h_l in h_l_values:
         if mach_val not in mach_values:
             continue
         
-        # Get separation data
-        xsep = np.asarray(x_sep[temp_key]).ravel()
-        xmax = np.asarray(x_max[temp_key]).ravel()
+        # ---- Pull data from find_sepLength outputs ----
+        # sep_length[temp_key] is the TOTAL separation length (sum of all bubbles)
+        # x_sep[temp_key] is the array of separation START locations
         
-        # Window mask: between the first two maxima
-        if xmax.size >= 2:
-            lo, hi = np.sort(xmax[:2])
-            mask_new = np.isfinite(xsep) & (xsep > lo) & (xsep < hi)
-            x_sep_filtered = xsep[mask_new]
-        else:
-            x_sep_filtered = np.array([], dtype=float)
+        sep_len_val = sep_length.get(temp_key, 0.0)
+        sep_len_nd_val = sep_length_nonDim.get(temp_key, 0.0)
+        x_sep_arr = np.asarray(x_sep.get(temp_key, [])).ravel()
+        
+        # Determine if separation occurs:
+        # sep_length > 0 means tau_x went negative somewhere in the domain
+        does_separate = (sep_len_val > 0) and (x_sep_arr.size > 0)
         
         # Store results
         results_by_mach[mach_val]['h_l'].append(h_l)
+        results_by_mach[mach_val]['sep_len'].append(sep_len_val)
+        results_by_mach[mach_val]['sep_len_nonDim'].append(sep_len_nd_val)
+        results_by_mach[mach_val]['separates'].append(does_separate)
         
-        if x_sep_filtered.size:
-            firstSepPointX = float(np.min(x_sep_filtered))
-            results_by_mach[mach_val]['x_sep'].append(firstSepPointX)
-            results_by_mach[mach_val]['separates'].append(True)
+        # Also store first separation location for Figure C
+        if does_separate:
+            results_by_mach[mach_val]['x_sep_first'].append(float(np.min(x_sep_arr)))
         else:
-            results_by_mach[mach_val]['x_sep'].append(np.nan)
-            results_by_mach[mach_val]['separates'].append(False)
+            results_by_mach[mach_val]['x_sep_first'].append(np.nan)
+
 
 # =============================================================================
-# FIGURE A: Summary Line Plot
+# FIGURE A: Separation Length vs h/l
 # =============================================================================
-fig_a, ax_a = plt.subplots(figsize=(12, 8))
+"""
+TEACHING POINT - Dimensional vs Non-Dimensional:
+-------------------------------------------------
+You have two options here:
+    1. sep_len     → dimensional [m], good for seeing absolute bubble sizes
+    2. sep_len_nonDim → L_sep / L_domain, good for comparing across geometries
 
-for mach_val in mach_values:
-    data = results_by_mach[mach_val]
-    
-    # Get h/l and x_sep values where separation occurs
-    h_l_sep = [h for h, sep in zip(data['h_l'], data['separates']) if sep]
-    x_sep_vals = [x for x, sep in zip(data['x_sep'], data['separates']) if sep]
-    
-    if h_l_sep:  # Only plot if there's data
-        # Sort by h/l for proper line connection
-        sorted_pairs = sorted(zip(h_l_sep, x_sep_vals))
-        h_l_sorted, x_sep_sorted = zip(*sorted_pairs)
-        
-        ax_a.plot(h_l_sorted, x_sep_sorted,
-                  color=mach_colors[mach_val],
-                  marker=mach_markers[mach_val],
-                  markersize=14,
-                  linewidth=2.5,
-                  markeredgecolor='black',
-                  markeredgewidth=1,
-                  label=f'M = {mach_val}')
+I'm plotting BOTH so you can decide which tells the better story for your paper.
+The non-dimensional version is typically preferred because it removes domain-length
+dependence and makes the physics clearer.
+"""
 
-ax_a.set_xlabel('h/l', fontsize=26)
-ax_a.set_ylabel('First Separation Location, x [m]', fontsize=26)
-ax_a.set_title('First Separation Point Location vs h/l', fontsize=34, fontweight='bold')
-ax_a.tick_params(labelsize=21)
-ax_a.legend(title='Mach Number', fontsize=18, title_fontsize=21, loc='best')
-ax_a.grid(True, alpha=0.3)
-ax_a.set_xlim([min(h_l_values) - 0.005, max(h_l_values) + 0.005])
-
-plt.tight_layout()
-plt.savefig('figure_a_separation_vs_hl.png', dpi=200, bbox_inches='tight')
-plt.show()
-#%%
-
-# =============================================================================
-# FIGURE A: Summary Line Plot (with outlier filtering)
-# =============================================================================
-fig_a, ax_a = plt.subplots(figsize=(12, 8))
+# --- Figure A1: Dimensional separation length ---
+fig_a1, ax_a1 = plt.subplots(figsize=(12, 8))
 
 # Define outliers to exclude: list of (mach, h_l) tuples
 outliers_to_exclude = [
-    (3.5, 0.04),  # Known bad separation detection
-    # Add more tuples here if needed: (mach_value, h_l_value),
+    # (3.5, 0.04),  # Example: known bad separation detection
+    # Add more tuples here if needed
 ]
 
 for mach_val in mach_values:
     data = results_by_mach[mach_val]
     
-    # Get h/l and x_sep values where separation occurs AND not an outlier
+    # Filter: only where separation occurs AND not an outlier
     h_l_sep = []
-    x_sep_vals = []
+    sep_vals = []
     
-    for h, x, sep in zip(data['h_l'], data['x_sep'], data['separates']):
-        if sep:  # Only if separation occurs
-            # Check if this point is in the outlier list
-            if (mach_val, h) not in outliers_to_exclude:
-                h_l_sep.append(h)
-                x_sep_vals.append(x)
+    for h, sl, sep in zip(data['h_l'], data['sep_len'], data['separates']):
+        if sep and (mach_val, h) not in outliers_to_exclude:
+            h_l_sep.append(h)
+            sep_vals.append(sl)
     
-    if h_l_sep:  # Only plot if there's data
-        # Sort by h/l for proper line connection
-        sorted_pairs = sorted(zip(h_l_sep, x_sep_vals))
-        h_l_sorted, x_sep_sorted = zip(*sorted_pairs)
+    if h_l_sep:
+        sorted_pairs = sorted(zip(h_l_sep, sep_vals))
+        h_sorted, sl_sorted = zip(*sorted_pairs)
         
-        ax_a.plot(h_l_sorted, x_sep_sorted,
-                  color=mach_colors[mach_val],
-                  marker=mach_markers[mach_val],
-                  markersize=14,
-                  linewidth=2.5,
-                  markeredgecolor='black',
-                  markeredgewidth=1,
-                  label=f'M = {mach_val}')
+        ax_a1.plot(h_sorted, sl_sorted,
+                   color=mach_colors[mach_val],
+                   marker=mach_markers[mach_val],
+                   markersize=14,
+                   linewidth=2.5,
+                   markeredgecolor='black',
+                   markeredgewidth=1,
+                   label=f'M = {mach_val}')
 
-ax_a.set_xlabel('h/l', fontsize=26)
-ax_a.set_ylabel('First Separation Location, x [m]', fontsize=26)
-ax_a.set_title('First Separation Point Location vs h/l', fontsize=34, fontweight='bold')
-ax_a.tick_params(labelsize=21)
-ax_a.legend(title='Mach Number', fontsize=18, title_fontsize=21, loc='best')
-ax_a.grid(True, alpha=0.3)
-ax_a.set_xlim([min(h_l_values) - 0.005, max(h_l_values) + 0.005])
+ax_a1.set_xlabel('h/l', fontsize=26)
+ax_a1.set_ylabel('Total Separation Length [m]', fontsize=26)
+ax_a1.set_title('Separation Length vs h/l', fontsize=34, fontweight='bold')
+ax_a1.tick_params(labelsize=21)
+ax_a1.legend(title='Mach Number', fontsize=18, title_fontsize=21, loc='best')
+ax_a1.grid(True, alpha=0.3)
+ax_a1.set_xlim([min(h_l_values) - 0.005, max(h_l_values) + 0.005])
 
 plt.tight_layout()
-plt.savefig('figure_a_separation_vs_hl.png', dpi=200, bbox_inches='tight')
+plt.savefig('figure_a1_sepLength_vs_hl.png', dpi=200, bbox_inches='tight')
 plt.show()
 
-#%%
+
+# --- Figure A2: Non-dimensional separation length ---
+fig_a2, ax_a2 = plt.subplots(figsize=(12, 8))
+
+for mach_val in mach_values:
+    data = results_by_mach[mach_val]
+    
+    h_l_sep = []
+    sep_nd_vals = []
+    
+    for h, sl_nd, sep in zip(data['h_l'], data['sep_len_nonDim'], data['separates']):
+        if sep and (mach_val, h) not in outliers_to_exclude:
+            h_l_sep.append(h)
+            sep_nd_vals.append(sl_nd)
+    
+    if h_l_sep:
+        sorted_pairs = sorted(zip(h_l_sep, sep_nd_vals))
+        h_sorted, sl_nd_sorted = zip(*sorted_pairs)
+        
+        ax_a2.plot(h_sorted, sl_nd_sorted,
+                   color=mach_colors[mach_val],
+                   marker=mach_markers[mach_val],
+                   markersize=14,
+                   linewidth=2.5,
+                   markeredgecolor='black',
+                   markeredgewidth=1,
+                   label=f'M = {mach_val}')
+
+ax_a2.set_xlabel('h/l', fontsize=26)
+ax_a2.set_ylabel(r'$L_{sep} / L_{domain}$', fontsize=26)
+ax_a2.set_title('Non-Dimensional Separation Length vs h/l', fontsize=34, fontweight='bold')
+ax_a2.tick_params(labelsize=21)
+ax_a2.legend(title='Mach Number', fontsize=18, title_fontsize=21, loc='best')
+ax_a2.grid(True, alpha=0.3)
+ax_a2.set_xlim([min(h_l_values) - 0.005, max(h_l_values) + 0.005])
+
+plt.tight_layout()
+plt.savefig('figure_a2_sepLength_nonDim_vs_hl.png', dpi=200, bbox_inches='tight')
+plt.show()
+
+
 # =============================================================================
-# FIGURE B: Heatmap - Separation Occurrence Matrix
+# FIGURE B: Heatmap - Separation Occurrence Matrix (unchanged logic)
 # =============================================================================
-# Create matrix: rows = h/l, columns = Mach
+"""
+TEACHING POINT - Why the heatmap still works the same:
+------------------------------------------------------
+The heatmap only cares about YES/NO separation, which is the same whether you
+detect it from x_sep arrays or from sep_length > 0. The difference is that
+find_sepLength is more robust because it:
+    1. Handles boundary negatives (tau_x < 0 at domain edges)
+    2. Drops pairs that touch the domain boundary (not real separation)
+    3. Uses interpolated zero-crossings instead of raw indices
+"""
+
 separation_matrix = np.zeros((len(h_l_values), len(mach_values)))
 
 for i, h_l in enumerate(h_l_values):
     for j, mach_val in enumerate(mach_values):
         data = results_by_mach[mach_val]
-        # Find the index for this h/l
         try:
             idx = data['h_l'].index(h_l)
             separation_matrix[i, j] = 1 if data['separates'][idx] else 0
@@ -1988,47 +1865,90 @@ for i, h_l in enumerate(h_l_values):
 
 fig_b, ax_b = plt.subplots(figsize=(10, 8))
 
-# Custom colormap: Red for no separation, Green for separation
-from matplotlib.colors import ListedColormap
-cmap_binary = ListedColormap(['#2ECC71', '#E74C3C'])  # Red, Green
+cmap_binary = ListedColormap(['#2ECC71', '#E74C3C'])  # Green = No Sep, Red = Sep
 
 im = ax_b.imshow(separation_matrix, cmap=cmap_binary, aspect='auto', vmin=0, vmax=1)
 
-# Set tick labels
 ax_b.set_xticks(np.arange(len(mach_values)))
 ax_b.set_yticks(np.arange(len(h_l_values)))
 ax_b.set_xticklabels([f'{m}' for m in mach_values], fontsize=21)
 ax_b.set_yticklabels([f'{h:.2f}' for h in h_l_values], fontsize=21)
 
-# Set minor ticks at cell boundaries (offset by 0.5 from cell centers)
+# Minor ticks for grid
 ax_b.set_xticks(np.arange(-0.5, len(mach_values), 1), minor=True)
 ax_b.set_yticks(np.arange(-0.5, len(h_l_values), 1), minor=True)
-
-# Draw grid lines at minor ticks
 ax_b.grid(which='minor', color='black', linestyle='-', linewidth=2)
-
-# Remove minor tick marks (keep only the lines)
 ax_b.tick_params(which='minor', length=0)
 
-# Add text annotations in each cell
+# Cell annotations
 for i in range(len(h_l_values)):
     for j in range(len(mach_values)):
         value = separation_matrix[i, j]
         text = "Sep" if value == 1 else "No Sep"
-        text_color = 'white'
-        ax_b.text(j, i, text, ha='center', va='center', 
-                  fontsize=16, fontweight='bold', color=text_color)
+        ax_b.text(j, i, text, ha='center', va='center',
+                  fontsize=16, fontweight='bold', color='white')
 
 ax_b.set_xlabel('Mach Number', fontsize=21)
 ax_b.set_ylabel('h/l', fontsize=21)
 ax_b.set_title('Flow Separation Occurrence Map', fontsize=32, fontweight='bold')
 
-# Add colorbar
 cbar = plt.colorbar(im, ax=ax_b, ticks=[0.25, 0.75])
 cbar.ax.set_yticklabels(['No Separation', 'Separation'], fontsize=18)
 
 plt.tight_layout()
 plt.savefig('figure_b_separation_heatmap.png', dpi=200, bbox_inches='tight')
+plt.show()
+
+
+# =============================================================================
+# FIGURE C: First Separation Location vs h/l (your original Figure A, preserved)
+# =============================================================================
+"""
+TEACHING POINT - Why keep this plot?
+------------------------------------
+Separation LENGTH tells you HOW BIG the bubble is.
+First separation LOCATION tells you WHERE on the geometry it starts.
+Both are important but answer different questions:
+    - Length → "How severe is separation?"  (affects drag, heat transfer)
+    - Location → "Where does separation start?" (for geometry optimization)
+"""
+
+fig_c, ax_c = plt.subplots(figsize=(12, 8))
+
+for mach_val in mach_values:
+    data = results_by_mach[mach_val]
+    
+    h_l_sep = []
+    x_first_vals = []
+    
+    for h, xf, sep in zip(data['h_l'], data['x_sep_first'], data['separates']):
+        if sep and (mach_val, h) not in outliers_to_exclude:
+            h_l_sep.append(h)
+            x_first_vals.append(xf)
+    
+    if h_l_sep:
+        sorted_pairs = sorted(zip(h_l_sep, x_first_vals))
+        h_sorted, xf_sorted = zip(*sorted_pairs)
+        
+        ax_c.plot(h_sorted, xf_sorted,
+                  color=mach_colors[mach_val],
+                  marker=mach_markers[mach_val],
+                  markersize=14,
+                  linewidth=2.5,
+                  markeredgecolor='black',
+                  markeredgewidth=1,
+                  label=f'M = {mach_val}')
+
+ax_c.set_xlabel('h/l', fontsize=26)
+ax_c.set_ylabel('First Separation Location, x [m]', fontsize=26)
+ax_c.set_title('First Separation Point Location vs h/l', fontsize=34, fontweight='bold')
+ax_c.tick_params(labelsize=21)
+ax_c.legend(title='Mach Number', fontsize=18, title_fontsize=21, loc='best')
+ax_c.grid(True, alpha=0.3)
+ax_c.set_xlim([min(h_l_values) - 0.005, max(h_l_values) + 0.005])
+
+plt.tight_layout()
+plt.savefig('figure_c_first_sep_location_vs_hl.png', dpi=200, bbox_inches='tight')
 plt.show()
 
 
@@ -3710,25 +3630,45 @@ for case_key in cases_by_hl.keys():
 h_l_values = np.arange(0.02,0.1,0.01) # Defining the h_l values that we have 
 
 
-axialForceScaled = smallPertSolver(h_l_values, ds_by_case, plotting = True)
+#axialForceScaled = smallPertSolver(h_l_values, ds_by_case, plotting = True)
+
+
+
+# Same as before, just one extra return value
+axialForceScaled, axialForceScaled_SE = smallPertSolver_with_SE(
+    h_l_values, ds_by_case, plotting=True
+)
 
 
 
 
-
-
+#%%
+axialForceScaled, axialForceScaled_SE, axialForceScaled_combined = \
+    smallPertSolver_combined(h_l_values, ds_by_case, plotting=False)
 
 
 #%%
 
 
 
+# ====== SETUP ====== #
+h_l_values = np.arange(0.02,0.1,0.01) # Defining the h_l values that we have 
+
 
 # Plotting the results # 
 plot_scaled_axialForce_vs_hl(axialForceScaled, h_l_values)
         
 
+#%%
 
+# Understanding how to optimize using small perturbation theory for maximum Axial force(expected torque) #
+x0 = 2
+x = np.linspace(0,1,1000)
+h = 5 
+
+y = h* np.exp((-x/x0)**2)
+
+plt.plot(x,y)
 
 
 

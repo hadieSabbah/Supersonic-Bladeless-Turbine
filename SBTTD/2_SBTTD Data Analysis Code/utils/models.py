@@ -1300,13 +1300,1053 @@ def smallPertSolver(h_l_values, ds_by_case, plotting = False):
 
 
 
+#%% Small perturbation theory with shock - expansion theory ###
+
+
+
+"""
+#------------------------------------------------------------------------------------------------------------------------------------#
+             Enhanced Small Perturbation Solver with Shock-Expansion Theory
+#------------------------------------------------------------------------------------------------------------------------------------#
+
+PURPOSE:
+========
+This is your existing smallPertSolver with shock-expansion theory ADDED as a second
+theoretical comparison. The original small perturbation theory is UNCHANGED — shock-expansion
+is purely additive.
+
+WHY BOTH THEORIES?
+==================
+Small Perturbation Theory:
+    - Assumes small disturbances (h/l << 1)
+    - Linearizes the governing equations → Cp = -2*dy/dx / sqrt(M²-1)
+    - Gives a sinusoidal pressure distribution (same shape as the wall)
+    - Breaks down at higher h/l and higher Mach (nonlinear effects)
+
+Shock-Expansion Theory:
+    - Handles finite-amplitude disturbances
+    - Uses exact oblique shock relations for compressions
+    - Uses exact Prandtl-Meyer function for expansions
+    - Captures nonlinear wave steepening, pressure asymmetry
+    - More accurate at higher h/l and Mach, but still inviscid (no separation)
+
+Together they bracket the RANS solution: small perturbation from the linear side,
+shock-expansion from the nonlinear inviscid side.
+
+WHAT CHANGED FROM YOUR ORIGINAL:
+=================================
+1. Added: shock_expansion_wall_pressure() function call inside the Mach loop
+2. Added: P_wall_SE to the comparison plots (third line)
+3. Added: axialForce_SE and its difference to the results DataFrame
+4. Added: axialForceScaled_SE output dictionary
+5. Everything else is IDENTICAL to your original code
+
+USAGE:
+======
+    # Same call signature as before, with one new output
+    axialForceScaled, axialForceScaled_SE = smallPertSolver_with_SE(
+        h_l_values, ds_by_case, plotting=True
+    )
+"""
+
+import numpy as np
+import sympy as sp
+from sympy import pprint
+import matplotlib.pyplot as plt
+import pandas as pd
+#from shock_expansion_theory import shock_expansion_analysis
+# You need these from your existing codebase:
+# from your_module import isentropic_solver, compute_torque_2D_norm, compute_phi_corrected
+# from your_module import get_wall_critical_points
+# from shock_expansion_theory import shock_expansion_analysis
+
+
+# =============================================================================
+# NEW FUNCTION: Get wall pressure from shock-expansion theory
+# =============================================================================
+"""
+TEACHING POINT - Why this wrapper function?
+--------------------------------------------
+Your shock_expansion_analysis() returns a ShockExpansionResult object with 
+pressure_ratio (p/p_inf) at the x-coordinates of the INPUT geometry.
+
+But in your solver, the RANS wall points (x_wall_RANS) and the theory wall 
+points (x_wall from linspace) may have DIFFERENT x-coordinates and DIFFERENT 
+numbers of points.
+
+So this wrapper:
+    1. Runs shock-expansion on the analytical geometry (x_wave, y_wave)
+    2. Interpolates the result onto whatever x-grid you need
+    3. Returns dimensional pressure [Pa] for direct comparison with RANS
+
+This keeps the shock-expansion call clean and reusable.
+"""
+
+def shock_expansion_wall_pressure(x_wall, y_wall, M_inf, p_inf, gamma=1.4):
+    """
+    Compute wall pressure distribution using shock-expansion theory.
+    
+    Parameters
+    ----------
+    x_wall : np.ndarray
+        x-coordinates along the wall where you want P
+    y_wall : np.ndarray
+        y-coordinates of the wall at those x locations
+    M_inf : float
+        Freestream Mach number
+    p_inf : float
+        Freestream static pressure [Pa]
+    gamma : float
+        Ratio of specific heats (default 1.4)
+    
+    Returns
+    -------
+    P_wall_SE : np.ndarray
+        Wall pressure [Pa] at each x_wall location
+    result : ShockExpansionResult
+        Full result object (in case you want Mach distribution, etc.)
+    """
+    # Run shock-expansion analysis
+    # This marches along the wall, applying oblique shocks for compressions
+    # and Prandtl-Meyer expansions for expansions
+    result = shock_expansion_analysis(x_wall, y_wall, M_inf, p_inf=p_inf, gamma=gamma)
+    
+    # result.pressure is already in [Pa] since we passed p_inf in dimensional form
+    P_wall_SE = result.pressure
+    
+    return P_wall_SE, result
+
+
+# =============================================================================
+# ENHANCED SOLVER: Original + Shock-Expansion
+# =============================================================================
+
+def smallPertSolver_with_SE(h_l_values, ds_by_case, plotting=False):
+    """
+    Enhanced version of smallPertSolver that includes shock-expansion theory.
+    
+    Parameters
+    ----------
+    h_l_values : list
+        List of h/l amplitude ratios
+    ds_by_case : dict
+        Dictionary of case datasets
+    plotting : bool
+        Whether to show comparison plots
+    
+    Returns
+    -------
+    axialForceScaled : dict
+        F_RANS / F_smallPert for each case (same as original)
+    axialForceScaled_SE : dict
+        F_RANS / F_shockExpansion for each case (NEW)
+    """
+    
+    # Pre-Allocating variables for results
+    results_list = []
+    axialForceScaled = {}
+    axialForceScaled_SE = {}  # NEW: shock-expansion scaling
+    
+    for k, h_l in enumerate(h_l_values):
+        # Pre-defined variables
+        N = 1
+        l = 0.1
+        h = h_l * l
+        num_of_points = 1000
+        
+        # Defining the geometry
+        lam = l / (2 * N + 1) * 2
+        x_wave = np.linspace(0, l, num_of_points)
+        y_wave = h * np.sin(2 * np.pi * x_wave / lam)
+        
+        # Defining symbolic variables and equations
+        x_variable = sp.Symbol('x_variable')
+        y_variable = sp.Symbol('y_variable')
+        y_wall = 0
+        h_variable = sp.Symbol('h_variable')
+        l_variable = sp.Symbol("l_variable")
+        
+        # The equation of the wall
+        y_equation = h_variable * sp.sin((2 * sp.pi * x_variable) / lam)
+        
+        # Range of Mach numbers
+        M_infty_range = np.arange(1.5, 4.5, 0.5)
+        
+        for M_infty in M_infty_range:
+            
+            # Construct key from loop variables
+            case_key = f"h_l_{h_l:.2f}_Mach_{M_infty:.1f}"
+            
+            if case_key not in ds_by_case:
+                print(f"Skipping: {case_key} not found")
+                continue
+            
+            # ================================================================
+            # FLOW CONDITIONS (unchanged from your original)
+            # ================================================================
+            B = M_infty**2 - 1
+            gamma = 1.4
+            R = 287
+            
+            flow_results = isentropic_solver("m", M_infty)
+            P_P0 = flow_results[1]
+            T_T0 = flow_results[3]
+            
+            T0 = 300   # K
+            P0 = 1e6   # Pa
+            
+            T_infty = T_T0 * T0
+            p_infty = P_P0 * P0
+            rho_infty = p_infty / (R * T_infty)
+            
+            a_infty = np.sqrt(gamma * R * T_infty)
+            V_infty = a_infty * M_infty
+            
+            # ================================================================
+            # SYMBOLIC MATH FOR SMALL PERTURBATION THEORY (unchanged)
+            # ================================================================
+            
+            dy_dx = sp.diff(y_equation, x_variable)
+            V_infty_variable = sp.Symbol("V_infty_variable")
+            B_variable = sp.Symbol("B_variable")
+            
+            dphi_dy_wall = dy_dx * V_infty_variable
+            df_dx = dphi_dy_wall / -sp.sqrt(B_variable)
+            
+            C = sp.Symbol('C')
+            y_variable = sp.Symbol('y_variable')
+            f_indefinite = sp.integrate(df_dx, x_variable) + C
+            phi_xy = sp.simplify(f_indefinite).subs(x_variable, x_variable - B_variable * y_variable)
+            
+            phi_xy_general = phi_xy
+            phi_xy_wall = phi_xy_general.subs(y_variable, 0)
+            
+            dphi_dx = sp.diff(phi_xy_general, x_variable)
+            dphi_dy = sp.diff(phi_xy_general, y_variable)
+            
+            Cp = ((-2 / V_infty_variable) * dphi_dx)
+            Cp_wall = Cp.subs(y_variable, 0)
+            
+            u_prime = dphi_dx
+            v_prime = dphi_dy
+            V_x = V_infty_variable + u_prime
+            V_y = v_prime
+            
+            print("==" * 20)
+            pprint(f"{case_key}")
+            pprint(Cp_wall)
+            print("==" * 20)
+            print("\n")
+            
+            # ================================================================
+            # CREATE NUMERICAL FUNCTIONS (unchanged)
+            # ================================================================
+            
+            y_wall_func = sp.lambdify(x_variable,
+                                       y_equation.subs([(h_variable, h), (l_variable, l)]), 'numpy')
+            
+            f_indefinite_func = sp.lambdify(
+                (x_variable, h_variable, l_variable, V_infty_variable, B_variable, C),
+                f_indefinite, 'numpy')
+            
+            phi_xy_general_func = sp.lambdify(
+                (x_variable, y_variable, h_variable, l_variable, V_infty_variable, B_variable, C),
+                phi_xy_general, 'numpy')
+            
+            phi_xy_wall_func = sp.lambdify(
+                (x_variable, h_variable, l_variable, V_infty_variable, B_variable, C),
+                phi_xy_wall, 'numpy')
+            
+            dphi_dx_func = sp.lambdify(
+                (x_variable, y_variable, h_variable, l_variable, V_infty_variable, B_variable),
+                dphi_dx, 'numpy')
+            
+            dphi_dy_func = sp.lambdify(
+                (x_variable, y_variable, h_variable, l_variable, V_infty_variable, B_variable),
+                dphi_dy, 'numpy')
+            
+            Cp_func = sp.lambdify(
+                (x_variable, y_variable, h_variable, l_variable, V_infty_variable, B_variable),
+                Cp, 'numpy')
+            
+            Cp_wall_func = sp.lambdify(
+                (x_variable, h_variable, l_variable, V_infty_variable, B_variable),
+                Cp_wall, 'numpy')
+            
+            u_prime_func = sp.lambdify(
+                (x_variable, y_variable, h_variable, l_variable, V_infty_variable, B_variable),
+                u_prime, 'numpy')
+            
+            v_prime_func = sp.lambdify(
+                (x_variable, y_variable, h_variable, l_variable, V_infty_variable, B_variable),
+                v_prime, 'numpy')
+            
+            V_x_func = sp.lambdify(
+                (x_variable, y_variable, h_variable, l_variable, V_infty_variable, B_variable),
+                V_x, 'numpy')
+            
+            V_y_func = sp.lambdify(
+                (x_variable, y_variable, h_variable, l_variable, V_infty_variable, B_variable),
+                V_y, 'numpy')
+            
+            # ================================================================
+            # DOMAIN AND FIELD COMPUTATION (unchanged)
+            # ================================================================
+            
+            x_min, x_max = 0, l
+            y_min = -h - 0.01
+            y_max = 0.3
+            
+            x_grid = np.linspace(x_min, x_max, 150)
+            y_grid = np.linspace(y_min, y_max, 150)
+            X_grid, Y_grid = np.meshgrid(x_grid, y_grid)
+            
+            phi_corrected = compute_phi_corrected(X_grid, Y_grid, f_indefinite_func,
+                                                   y_wall_func, np.sqrt(B), l, h,
+                                                   V_infty, B, 5)
+            
+            dx = x_grid[1] - x_grid[0]
+            dy = y_grid[1] - y_grid[0]
+            
+            u_prime_grid = np.gradient(phi_corrected, dx, axis=1)
+            v_prime_grid = np.gradient(phi_corrected, dy, axis=0)
+            
+            u_total = V_infty + u_prime_grid
+            v_total = v_prime_grid
+            V_total = np.sqrt(u_total**2 + v_total**2)
+            
+            Cp_grid = (-2 / V_infty) * u_prime_grid
+            
+            pressure_ratio = 1 + (gamma * M_infty**2 / 2) * Cp_grid
+            P_local = p_infty * pressure_ratio
+            
+            temperature_ratio = 1 - (gamma - 1) * M_infty**2 * Cp_grid / 2
+            temperature_ratio = np.clip(temperature_ratio, 0.5, 2.0)
+            T_local = T_infty * temperature_ratio
+            
+            M_local = V_total / a_infty
+            
+            mask = np.zeros_like(X_grid, dtype=bool)
+            for i, x_val in enumerate(x_grid):
+                y_wall_at_x = y_wall_func(x_val)
+                mask[:, i] = Y_grid[:, i] >= y_wall_at_x
+            
+            Cp_masked = np.where(mask, Cp_grid, np.nan)
+            P_masked = np.where(mask, P_local, np.nan)
+            M_masked = np.where(mask, M_local, np.nan)
+            
+            n = 500
+            wall_x_sources = get_wall_critical_points(l, n)
+            wall_y_sources = y_wall_func(wall_x_sources)
+            
+            # ================================================================
+            # RANS DATA EXTRACTION (unchanged)
+            # ================================================================
+            
+            x_wall_RANS = ds_by_case[case_key]["X"].data
+            x_min_mask = 0
+            x_max_mask = l
+            mask_rans = (x_min_mask < x_wall_RANS) & (x_wall_RANS < x_max_mask)
+            
+            P_wall_RANS = ds_by_case[case_key]["P"].data[mask_rans]
+            y_wall_RANS = ds_by_case[case_key]["Y"].data[mask_rans]
+            x_wall_RANS = x_wall_RANS[mask_rans]
+            
+            # ================================================================
+            # SMALL PERTURBATION WALL PRESSURE (unchanged)
+            # ================================================================
+            
+            x_wall_sp = np.linspace(0, l, len(P_wall_RANS))
+            y_wall_sp = y_wall_func(x_wall_sp)
+            
+            Cp_wall_results = Cp_wall_func(x_wall_sp, h, l, V_infty, B)
+            P_wall_smallPert = Cp_wall_results * 0.5 * rho_infty * V_infty**2 + p_infty
+            P_diff_smallPert = (np.abs(P_wall_RANS - P_wall_smallPert) / P_wall_RANS) * 100
+            
+            # ================================================================
+            # NEW: SHOCK-EXPANSION WALL PRESSURE
+            # ================================================================
+            """
+            TEACHING POINT - What's happening here:
+            ----------------------------------------
+            We evaluate shock-expansion theory on the SAME x-grid as the small 
+            perturbation theory (x_wall_sp) so that all three curves (RANS, 
+            small pert, shock-expansion) are on the same x-coordinates.
+            
+            The shock_expansion_wall_pressure() function:
+                1. Computes dy/dx → local wall angle θ at each point
+                2. Computes dθ between successive points
+                3. If dθ > 0 (compression): applies oblique shock relations
+                   → solves for shock angle β, gets post-shock M and p
+                4. If dθ < 0 (expansion): applies Prandtl-Meyer function
+                   → uses ν(M) + |dθ| to get new M, then isentropic p/p0
+                5. Returns the absolute pressure at each wall point
+            
+            KEY DIFFERENCE from small perturbation:
+            - Small pert: Cp = -2*(dy/dx) / sqrt(M²-1) → always sinusoidal
+            - Shock-expansion: each compression/expansion changes the LOCAL 
+              Mach number, so subsequent waves see different M → asymmetric
+              pressure distribution, stronger peaks, physical nonlinearity
+            """
+            
+            P_wall_SE, SE_result = shock_expansion_wall_pressure(
+                x_wall_sp, y_wall_sp, M_infty, p_infty, gamma
+            )
+            P_diff_SE = (np.abs(P_wall_RANS - P_wall_SE) / P_wall_RANS) * 100
+            
+            # ================================================================
+            # FORCE COMPUTATION (original + new)
+            # ================================================================
+            
+            R_torque = 0  # No torque extraction
+            hl_RANS = compute_torque_2D_norm(x_wall_RANS, y_wall_RANS, P_wall_RANS, R_torque)
+            hl_smallPert = compute_torque_2D_norm(x_wall_sp, y_wall_sp, P_wall_smallPert, R_torque)
+            hl_SE = compute_torque_2D_norm(x_wall_sp, y_wall_sp, P_wall_SE, R_torque)  # NEW
+            
+            axialForce_RANS = hl_RANS['F_theta']
+            axialForce_smallPert = hl_smallPert['F_theta']
+            axialForce_SE = hl_SE['F_theta']  # NEW
+            
+            # ================================================================
+            # PLOTTING (enhanced with shock-expansion)
+            # ================================================================
+            
+            if plotting:
+                fig, axes = plt.subplots(1, 3, figsize=(18, 6))
+                
+                # --- Panel 1: P_wall comparison (3 curves now) ---
+                ax1 = axes[0]
+                ax1.plot(x_wall_RANS, P_wall_RANS, 'k-', linewidth=3, label="RANS")
+                ax1.plot(x_wall_sp, P_wall_smallPert, 'b--', linewidth=2.5, label="Small Perturbation")
+                ax1.plot(x_wall_sp, P_wall_SE, 'r-.', linewidth=2.5, label="Shock-Expansion")
+                ax1.set_title(f"{case_key}: $P_{{wall}}$ Comparison", fontsize=14)
+                ax1.set_xlabel("X [m]", fontsize=12)
+                ax1.set_ylabel(r"$P_{wall}$ [Pa]", fontsize=12)
+                ax1.grid(True, which="both", alpha=0.3)
+                ax1.legend(fontsize=10)
+                
+                # --- Panel 2: % Difference for both theories ---
+                ax2 = axes[1]
+                ax2.plot(x_wall_sp, P_diff_smallPert, 'b-', linewidth=2, label="Small Pert Error")
+                ax2.plot(x_wall_sp, P_diff_SE, 'r-', linewidth=2, label="Shock-Exp Error")
+                ax2.set_xlim([0, l])
+                ax2.set_title(r"$P_{difference}$ [%] vs X", fontsize=14)
+                ax2.set_xlabel("X [m]", fontsize=12)
+                ax2.set_ylabel(r"$P_{difference}$ [%]", fontsize=12)
+                ax2.grid(True, which="both", alpha=0.3)
+                ax2.legend(fontsize=10)
+                
+                # --- Panel 3: Mach distribution from shock-expansion ---
+                """
+                TEACHING POINT - Why plot the local Mach?
+                ------------------------------------------
+                This is something small perturbation can't give you directly.
+                Shock-expansion tracks the LOCAL Mach number as it changes 
+                through each compression/expansion. This is important because:
+                    - If M_local drops below 1.0, the theory breaks (subsonic pocket)
+                    - If M_local gets very high, you may get unrealistic expansions
+                    - The Mach distribution shows WHERE the flow is most stressed
+                """
+                ax3 = axes[2]
+                ax3.plot(SE_result.x, SE_result.Mach, 'r-', linewidth=2)
+                ax3.axhline(y=M_infty, linestyle='--', color='gray', alpha=0.5, label=f'$M_\\infty$ = {M_infty}')
+                ax3.axhline(y=1.0, linestyle=':', color='black', alpha=0.3, label='M = 1')
+                ax3.set_title(f"Local Mach (Shock-Expansion)", fontsize=14)
+                ax3.set_xlabel("X [m]", fontsize=12)
+                ax3.set_ylabel("Mach Number", fontsize=12)
+                ax3.grid(True, which="both", alpha=0.3)
+                ax3.legend(fontsize=10)
+                
+                plt.tight_layout()
+                plt.show()
+            
+            # ================================================================
+            # STORE RESULTS (original + new)
+            # ================================================================
+            
+            # Original scaling
+            axialForceScaled[case_key] = axialForce_RANS / axialForce_smallPert
+            
+            # NEW: shock-expansion scaling
+            if axialForce_SE != 0:
+                axialForceScaled_SE[case_key] = axialForce_RANS / axialForce_SE
+            else:
+                axialForceScaled_SE[case_key] = np.nan
+            
+            # Compute differences
+            axialForce_diff_sp = (1 - (axialForce_RANS / axialForce_smallPert)) * 100
+            
+            if axialForce_SE != 0:
+                axialForce_diff_SE = (1 - (axialForce_RANS / axialForce_SE)) * 100
+            else:
+                axialForce_diff_SE = np.nan
+            
+            results_list.append({
+                'h/l': h_l,
+                'M_infty': M_infty,
+                'F_axial_RANS [N/m]': axialForce_RANS,
+                'F_axial_SmallPert [N/m]': axialForce_smallPert,
+                'F_axial_ShockExp [N/m]': axialForce_SE,           # NEW
+                'Diff_SmallPert [%]': axialForce_diff_sp,
+                'Diff_ShockExp [%]': axialForce_diff_SE,            # NEW
+                'Case_Key': case_key
+            })
+            
+            # ================================================================
+            # EXPORT (enhanced with shock-expansion columns)
+            # ================================================================
+            
+            df_results = pd.DataFrame(results_list)
+            
+            # Pivot table for small perturbation (original)
+            pivot_sp = df_results.pivot_table(
+                values='Diff_SmallPert [%]',
+                index='h/l',
+                columns='M_infty',
+                aggfunc='mean'
+            )
+            
+            # NEW: Pivot table for shock-expansion
+            pivot_SE = df_results.pivot_table(
+                values='Diff_ShockExp [%]',
+                index='h/l',
+                columns='M_infty',
+                aggfunc='mean'
+            )
+            
+            # Save to CSV
+            df_results.to_csv(
+                r'C:\Users\hhsabbah\Documents\01_Bladeless_Proj\32_Geometry Code\Graphs\axial_force_comparison.csv',
+                index=False
+            )
+            pivot_sp.to_csv(
+                r'C:\Users\hhsabbah\Documents\01_Bladeless_Proj\32_Geometry Code\Graphs\axial_force_pivot_smallPert.csv'
+            )
+            pivot_SE.to_csv(
+                r'C:\Users\hhsabbah\Documents\01_Bladeless_Proj\32_Geometry Code\Graphs\axial_force_pivot_shockExp.csv'
+            )
+            
+            plt.show()
+    
+    return axialForceScaled, axialForceScaled_SE
 
 
 
 
+#%% Small perturbation theory + SE ###
 
 
+"""
+#------------------------------------------------------------------------------------------------------------------------------------#
+         Combined Small Perturbation + Shock-Expansion Theory
+#------------------------------------------------------------------------------------------------------------------------------------#
 
+PURPOSE:
+========
+This module provides a COMBINED theoretical prediction that leverages the strengths
+of both small perturbation theory and shock-expansion theory.
+
+THE PHYSICS OF WHY THIS WORKS:
+==============================
+
+Small Perturbation Theory (SPT):
+    Strengths:
+        - Solves the linearized potential equation over the FULL domain
+        - Naturally captures wave reflections, interference, superposition
+        - Gives smooth, continuous pressure/velocity fields
+        - Handles the global flow structure well
+    Weaknesses:
+        - Assumes small disturbances → underestimates pressure at shocks
+        - Cp = -2*(dy/dx)/sqrt(M²-1) is symmetric (sinusoidal in, sinusoidal out)
+        - Cannot capture nonlinear wave steepening
+
+Shock-Expansion Theory (SE):
+    Strengths:
+        - Uses EXACT oblique shock and Prandtl-Meyer relations
+        - Captures nonlinear pressure amplification at compressions
+        - Tracks local Mach number changes → each wave sees correct M
+        - Gets the pressure asymmetry right (sharp compression, gentle expansion)
+    Weaknesses:
+        - Marching method → only knows about upstream conditions
+        - No wave reflections or interference from boundaries
+        - Point-by-point, no global flow awareness
+
+COMBINATION STRATEGY:
+=====================
+We use shock-expansion as a NONLINEAR CORRECTION to the small perturbation baseline.
+
+    P_combined(x) = P_smallPert(x) * [ P_SE(x) / P_SE_linearized(x) ]
+
+Where P_SE_linearized is what shock-expansion theory WOULD give if the disturbances
+were truly small (i.e., if SE agreed with small perturbation). The ratio captures
+ONLY the nonlinear amplification factor.
+
+In practice, for weak disturbances (low h/l), the ratio → 1 and you recover SPT.
+For strong disturbances (high h/l, high Mach), the ratio deviates from 1 and
+corrects the pressure peaks.
+
+Think of it like this:
+    - SPT provides the "map" of the flow (correct topology, wave patterns)
+    - SE provides the "intensity correction" (how much stronger shocks really are)
+    - Combined = correct map × correct intensity
+
+USAGE:
+======
+    # After running both theories independently:
+    P_combined = combined_wall_pressure(x_wall, P_wall_smallPert, P_wall_SE, p_infty)
+
+    # Or use the full solver that does everything:
+    axialForceScaled, axialForceScaled_SE, axialForceScaled_combined = \
+        smallPertSolver_combined(h_l_values, ds_by_case, plotting=True)
+"""
+
+import numpy as np
+import sympy as sp
+from sympy import pprint
+import matplotlib.pyplot as plt
+import pandas as pd
+
+# You need these from your existing codebase:
+# from your_module import isentropic_solver, compute_torque_2D_norm
+# from your_module import compute_phi_corrected, get_wall_critical_points
+# from shock_expansion_theory import shock_expansion_analysis
+
+
+# =============================================================================
+# CORE COMBINATION FUNCTION
+# =============================================================================
+
+def combined_wall_pressure(x_wall, P_wall_smallPert, P_wall_SE, p_infty,
+                           blend_sharpness=10.0):
+    """
+    Combine small perturbation and shock-expansion wall pressures.
+    
+    The method computes a nonlinear correction ratio from shock-expansion
+    and applies it to the small perturbation baseline.
+    
+    Parameters
+    ----------
+    x_wall : np.ndarray
+        x-coordinates along the wall
+    P_wall_smallPert : np.ndarray
+        Wall pressure from small perturbation theory [Pa]
+    P_wall_SE : np.ndarray
+        Wall pressure from shock-expansion theory [Pa]
+    p_infty : float
+        Freestream static pressure [Pa]
+    blend_sharpness : float
+        Controls how aggressively the nonlinear correction is applied.
+        Higher = trusts SE more at large deviations. Default 10.0 works
+        well for h/l in [0.02, 0.09] range.
+    
+    Returns
+    -------
+    P_combined : np.ndarray
+        Combined wall pressure [Pa]
+    correction_ratio : np.ndarray
+        The nonlinear correction factor applied (for diagnostics)
+    
+    TEACHING POINT - The Math:
+    --------------------------
+    Define pressure perturbations relative to freestream:
+        delta_SP(x) = P_smallPert(x) - p_infty    (linear perturbation)
+        delta_SE(x) = P_SE(x) - p_infty            (nonlinear perturbation)
+    
+    The correction ratio is:
+        R(x) = delta_SE(x) / delta_SP(x)    where delta_SP ≠ 0
+    
+    This ratio captures HOW MUCH the nonlinear physics amplifies (or reduces)
+    the pressure perturbation compared to linear theory:
+        R > 1 → nonlinear amplification (compressions are stronger than linear)
+        R < 1 → nonlinear weakening (expansions are gentler than linear)
+        R ≈ 1 → linear and nonlinear agree (weak disturbance region)
+    
+    The combined pressure is then:
+        P_combined(x) = p_infty + delta_SP(x) * R(x)
+                      = p_infty + delta_SE(x)     ... wait, that's just P_SE!
+    
+    NOT QUITE — because we apply a WEIGHTED blend. Near the freestream pressure
+    (where both theories agree), we trust SPT. Where there are large perturbations
+    (where nonlinearity matters), we shift toward SE. This is implemented via
+    a smooth weighting function based on the magnitude of the perturbation.
+    
+    The blending weight w(x) is:
+        w(x) = tanh(blend_sharpness * |delta_SP(x) / p_infty|)
+    
+    Where:
+        - Small perturbation (|delta_SP| << p_infty) → w ≈ 0 → trust SPT
+        - Large perturbation (|delta_SP| ~ p_infty)  → w ≈ 1 → trust SE
+    
+    Final combined pressure:
+        P_combined(x) = (1 - w(x)) * P_smallPert(x) + w(x) * P_SE(x)
+    """
+    
+    # Pressure perturbations relative to freestream
+    delta_SP = P_wall_smallPert - p_infty
+    delta_SE = P_wall_SE - p_infty
+    
+    # Normalized perturbation magnitude (how "large" is the disturbance)
+    perturbation_magnitude = np.abs(delta_SP) / p_infty
+    
+    # Blending weight: smooth transition from SPT (w=0) to SE (w=1)
+    # tanh gives: ~0 for small perturbations, ~1 for large perturbations
+    w = np.tanh(blend_sharpness * perturbation_magnitude)
+    
+    # Combined pressure: weighted blend
+    P_combined = (1 - w) * P_wall_smallPert + w * P_wall_SE
+    
+    # Correction ratio for diagnostics (how much did we shift from SPT?)
+    correction_ratio = np.where(
+        np.abs(P_wall_smallPert) > 1e-10,
+        P_combined / P_wall_smallPert,
+        1.0
+    )
+    
+    return P_combined, correction_ratio
+
+
+# =============================================================================
+# WRAPPER: Get SE wall pressure (same as previous file)
+# =============================================================================
+
+def shock_expansion_wall_pressure(x_wall, y_wall, M_inf, p_inf, gamma=1.4):
+    """
+    Compute wall pressure from shock-expansion theory.
+    """
+    result = shock_expansion_analysis(x_wall, y_wall, M_inf, p_inf=p_inf, gamma=gamma)
+    return result.pressure, result
+
+
+# =============================================================================
+# FULL COMBINED SOLVER
+# =============================================================================
+
+def smallPertSolver_combined(h_l_values, ds_by_case, plotting=False):
+    """
+    Solver that computes and compares ALL THREE predictions:
+        1. Small Perturbation Theory (SPT)
+        2. Shock-Expansion Theory (SE)
+        3. Combined SPT + SE
+    
+    Parameters
+    ----------
+    h_l_values : list
+        List of h/l amplitude ratios
+    ds_by_case : dict
+        Dictionary of case datasets
+    plotting : bool
+        Whether to show comparison plots
+    
+    Returns
+    -------
+    axialForceScaled : dict
+        F_RANS / F_smallPert
+    axialForceScaled_SE : dict
+        F_RANS / F_shockExpansion
+    axialForceScaled_combined : dict
+        F_RANS / F_combined
+    """
+    
+    results_list = []
+    axialForceScaled = {}
+    axialForceScaled_SE = {}
+    axialForceScaled_combined = {}  # NEW
+    
+    for k, h_l in enumerate(h_l_values):
+        N = 1
+        l = 0.1
+        h = h_l * l
+        num_of_points = 1000
+        
+        lam = l / (2 * N + 1) * 2
+        x_wave = np.linspace(0, l, num_of_points)
+        y_wave = h * np.sin(2 * np.pi * x_wave / lam)
+        
+        # Symbolic setup
+        x_variable = sp.Symbol('x_variable')
+        y_variable = sp.Symbol('y_variable')
+        h_variable = sp.Symbol('h_variable')
+        l_variable = sp.Symbol("l_variable")
+        
+        y_equation = h_variable * sp.sin((2 * sp.pi * x_variable) / lam)
+        
+        M_infty_range = np.arange(1.5, 4.5, 0.5)
+        
+        for M_infty in M_infty_range:
+            
+            case_key = f"h_l_{h_l:.2f}_Mach_{M_infty:.1f}"
+            
+            if case_key not in ds_by_case:
+                print(f"Skipping: {case_key} not found")
+                continue
+            
+            # ============================================================
+            # FLOW CONDITIONS
+            # ============================================================
+            B = M_infty**2 - 1
+            gamma = 1.4
+            R = 287
+            
+            flow_results = isentropic_solver("m", M_infty)
+            P_P0 = flow_results[1]
+            T_T0 = flow_results[3]
+            
+            T0 = 300
+            P0 = 1e6
+            
+            T_infty = T_T0 * T0
+            p_infty = P_P0 * P0
+            rho_infty = p_infty / (R * T_infty)
+            
+            a_infty = np.sqrt(gamma * R * T_infty)
+            V_infty = a_infty * M_infty
+            
+            # ============================================================
+            # SMALL PERTURBATION THEORY (symbolic, unchanged)
+            # ============================================================
+            
+            dy_dx = sp.diff(y_equation, x_variable)
+            V_infty_variable = sp.Symbol("V_infty_variable")
+            B_variable = sp.Symbol("B_variable")
+            
+            dphi_dy_wall = dy_dx * V_infty_variable
+            df_dx = dphi_dy_wall / -sp.sqrt(B_variable)
+            
+            C = sp.Symbol('C')
+            y_variable = sp.Symbol('y_variable')
+            f_indefinite = sp.integrate(df_dx, x_variable) + C
+            phi_xy = sp.simplify(f_indefinite).subs(
+                x_variable, x_variable - B_variable * y_variable
+            )
+            
+            phi_xy_general = phi_xy
+            dphi_dx = sp.diff(phi_xy_general, x_variable)
+            
+            Cp_wall = ((-2 / V_infty_variable) * dphi_dx).subs(y_variable, 0)
+            
+            print("==" * 20)
+            pprint(f"{case_key}")
+            pprint(Cp_wall)
+            print("==" * 20 + "\n")
+            
+            # Lambdify
+            y_wall_func = sp.lambdify(
+                x_variable,
+                y_equation.subs([(h_variable, h), (l_variable, l)]),
+                'numpy'
+            )
+            
+            Cp_wall_func = sp.lambdify(
+                (x_variable, h_variable, l_variable, V_infty_variable, B_variable),
+                Cp_wall, 'numpy'
+            )
+            
+            # ============================================================
+            # RANS DATA
+            # ============================================================
+            
+            x_wall_RANS = ds_by_case[case_key]["X"].data
+            mask_rans = (0 < x_wall_RANS) & (x_wall_RANS < l)
+            
+            P_wall_RANS = ds_by_case[case_key]["P"].data[mask_rans]
+            y_wall_RANS = ds_by_case[case_key]["Y"].data[mask_rans]
+            x_wall_RANS = x_wall_RANS[mask_rans]
+            
+            # ============================================================
+            # THEORY 1: SMALL PERTURBATION
+            # ============================================================
+            
+            x_wall_th = np.linspace(0, l, len(P_wall_RANS))
+            y_wall_th = y_wall_func(x_wall_th)
+            
+            Cp_wall_results = Cp_wall_func(x_wall_th, h, l, V_infty, B)
+            P_wall_SP = Cp_wall_results * 0.5 * rho_infty * V_infty**2 + p_infty
+            
+            # ============================================================
+            # THEORY 2: SHOCK-EXPANSION
+            # ============================================================
+            
+            P_wall_SE, SE_result = shock_expansion_wall_pressure(
+                x_wall_th, y_wall_th, M_infty, p_infty, gamma
+            )
+            
+            # ============================================================
+            # THEORY 3: COMBINED (the new part)
+            # ============================================================
+            """
+            TEACHING POINT - The blend_sharpness parameter:
+            ------------------------------------------------
+            This controls the transition sensitivity. A value of 10 means:
+                - At |delta_P/p_inf| = 0.05 (5% perturbation):  w ≈ 0.46
+                - At |delta_P/p_inf| = 0.10 (10% perturbation): w ≈ 0.76
+                - At |delta_P/p_inf| = 0.20 (20% perturbation): w ≈ 0.96
+            
+            For your range of h/l = 0.02 to 0.09:
+                - Low h/l (0.02): pressure perturbations are ~5-10% → mostly SPT
+                - High h/l (0.09): perturbations are ~30-50% → mostly SE
+            
+            This naturally transitions from linear to nonlinear theory 
+            exactly where it should. You can tune this if needed.
+            """
+            
+            P_wall_combined, correction_ratio = combined_wall_pressure(
+                x_wall_th, P_wall_SP, P_wall_SE, p_infty,
+                blend_sharpness=10.0
+            )
+            
+            # ============================================================
+            # % ERRORS
+            # ============================================================
+            
+            P_diff_SP = (np.abs(P_wall_RANS - P_wall_SP) / P_wall_RANS) * 100
+            P_diff_SE = (np.abs(P_wall_RANS - P_wall_SE) / P_wall_RANS) * 100
+            P_diff_combined = (np.abs(P_wall_RANS - P_wall_combined) / P_wall_RANS) * 100
+            
+            # Print average errors for quick comparison
+            print(f"  Avg Error → SPT: {np.nanmean(P_diff_SP):.2f}%  |  "
+                  f"SE: {np.nanmean(P_diff_SE):.2f}%  |  "
+                  f"Combined: {np.nanmean(P_diff_combined):.2f}%")
+            
+            # ============================================================
+            # FORCES
+            # ============================================================
+            
+            R_torque = 0
+            hl_RANS = compute_torque_2D_norm(x_wall_RANS, y_wall_RANS, P_wall_RANS, R_torque)
+            hl_SP = compute_torque_2D_norm(x_wall_th, y_wall_th, P_wall_SP, R_torque)
+            hl_SE = compute_torque_2D_norm(x_wall_th, y_wall_th, P_wall_SE, R_torque)
+            hl_combined = compute_torque_2D_norm(x_wall_th, y_wall_th, P_wall_combined, R_torque)
+            
+            F_RANS = hl_RANS['F_theta']
+            F_SP = hl_SP['F_theta']
+            F_SE = hl_SE['F_theta']
+            F_combined = hl_combined['F_theta']
+            
+            # ============================================================
+            # PLOTTING
+            # ============================================================
+            
+            if plotting:
+                fig, axes = plt.subplots(2, 2, figsize=(16, 12))
+                
+                # --- Panel 1: P_wall comparison (4 curves) ---
+                ax1 = axes[0, 0]
+                ax1.plot(x_wall_RANS, P_wall_RANS, 'k-', linewidth=3, label="RANS")
+                ax1.plot(x_wall_th, P_wall_SP, 'b--', linewidth=2, label="Small Perturbation")
+                ax1.plot(x_wall_th, P_wall_SE, 'r-.', linewidth=2, label="Shock-Expansion")
+                ax1.plot(x_wall_th, P_wall_combined, 'g-', linewidth=2.5,
+                         label="Combined", alpha=0.85)
+                ax1.set_title(f"{case_key}: $P_{{wall}}$ Comparison", fontsize=14)
+                ax1.set_xlabel("X [m]", fontsize=12)
+                ax1.set_ylabel(r"$P_{wall}$ [Pa]", fontsize=12)
+                ax1.grid(True, alpha=0.3)
+                ax1.legend(fontsize=10)
+                
+                # --- Panel 2: % Error comparison ---
+                ax2 = axes[0, 1]
+                ax2.plot(x_wall_th, P_diff_SP, 'b-', linewidth=1.5, label="Small Pert", alpha=0.7)
+                ax2.plot(x_wall_th, P_diff_SE, 'r-', linewidth=1.5, label="Shock-Exp", alpha=0.7)
+                ax2.plot(x_wall_th, P_diff_combined, 'g-', linewidth=2.5, label="Combined")
+                ax2.set_title(r"$|P_{theory} - P_{RANS}| / P_{RANS}$ [%]", fontsize=14)
+                ax2.set_xlabel("X [m]", fontsize=12)
+                ax2.set_ylabel("Error [%]", fontsize=12)
+                ax2.grid(True, alpha=0.3)
+                ax2.legend(fontsize=10)
+                ax2.set_xlim([0, l])
+                
+                # --- Panel 3: Blending weight ---
+                """
+                TEACHING POINT - Why plot the blending weight?
+                -----------------------------------------------
+                This shows you WHERE the combined method is trusting SPT 
+                vs SE. At compression peaks (high pressure), w → 1 (trust SE).
+                Near freestream pressure, w → 0 (trust SPT).
+                
+                If the combined method isn't improving accuracy, look at this 
+                plot: it tells you whether the blending is activating in the 
+                right places.
+                """
+                ax3 = axes[1, 0]
+                delta_SP = P_wall_SP - p_infty
+                w = np.tanh(10.0 * np.abs(delta_SP) / p_infty)
+                
+                ax3.plot(x_wall_th, w, 'g-', linewidth=2)
+                ax3.fill_between(x_wall_th, 0, w, alpha=0.15, color='green')
+                ax3.axhline(y=0.5, linestyle='--', color='gray', alpha=0.5)
+                ax3.set_title("Blending Weight: w(x)", fontsize=14)
+                ax3.set_xlabel("X [m]", fontsize=12)
+                ax3.set_ylabel("w  (0=SPT, 1=SE)", fontsize=12)
+                ax3.set_ylim([-0.05, 1.05])
+                ax3.grid(True, alpha=0.3)
+                ax3.set_xlim([0, l])
+                
+                # --- Panel 4: Local Mach from SE ---
+                ax4 = axes[1, 1]
+                ax4.plot(SE_result.x, SE_result.Mach, 'r-', linewidth=2)
+                ax4.axhline(y=M_infty, linestyle='--', color='gray', alpha=0.5,
+                            label=f'$M_\\infty$ = {M_infty}')
+                ax4.axhline(y=1.0, linestyle=':', color='black', alpha=0.3, label='M = 1')
+                ax4.set_title("Local Mach (Shock-Expansion)", fontsize=14)
+                ax4.set_xlabel("X [m]", fontsize=12)
+                ax4.set_ylabel("Mach Number", fontsize=12)
+                ax4.grid(True, alpha=0.3)
+                ax4.legend(fontsize=10)
+                
+                plt.suptitle(f"{case_key}", fontsize=18, fontweight='bold', y=1.01)
+                plt.tight_layout()
+                plt.show()
+            
+            # ============================================================
+            # STORE RESULTS
+            # ============================================================
+            
+            axialForceScaled[case_key] = F_RANS / F_SP if F_SP != 0 else np.nan
+            axialForceScaled_SE[case_key] = F_RANS / F_SE if F_SE != 0 else np.nan
+            axialForceScaled_combined[case_key] = F_RANS / F_combined if F_combined != 0 else np.nan
+            
+            # % differences
+            diff_SP = (1 - F_RANS / F_SP) * 100 if F_SP != 0 else np.nan
+            diff_SE = (1 - F_RANS / F_SE) * 100 if F_SE != 0 else np.nan
+            diff_combined = (1 - F_RANS / F_combined) * 100 if F_combined != 0 else np.nan
+            
+            results_list.append({
+                'h/l': h_l,
+                'M_infty': M_infty,
+                'F_axial_RANS [N/m]': F_RANS,
+                'F_axial_SmallPert [N/m]': F_SP,
+                'F_axial_ShockExp [N/m]': F_SE,
+                'F_axial_Combined [N/m]': F_combined,
+                'Diff_SmallPert [%]': diff_SP,
+                'Diff_ShockExp [%]': diff_SE,
+                'Diff_Combined [%]': diff_combined,
+                'Avg_P_Error_SP [%]': np.nanmean(P_diff_SP),
+                'Avg_P_Error_SE [%]': np.nanmean(P_diff_SE),
+                'Avg_P_Error_Combined [%]': np.nanmean(P_diff_combined),
+                'Case_Key': case_key
+            })
+            
+            # ============================================================
+            # EXPORT
+            # ============================================================
+            
+            df_results = pd.DataFrame(results_list)
+            
+            pivot_SP = df_results.pivot_table(
+                values='Diff_SmallPert [%]', index='h/l', columns='M_infty', aggfunc='mean')
+            pivot_SE = df_results.pivot_table(
+                values='Diff_ShockExp [%]', index='h/l', columns='M_infty', aggfunc='mean')
+            pivot_combined = df_results.pivot_table(
+                values='Diff_Combined [%]', index='h/l', columns='M_infty', aggfunc='mean')
+            
+            save_dir = r'C:\Users\hhsabbah\Documents\01_Bladeless_Proj\32_Geometry Code\Graphs'
+            df_results.to_csv(f'{save_dir}\\axial_force_comparison_3theories.csv', index=False)
+            pivot_SP.to_csv(f'{save_dir}\\pivot_smallPert.csv')
+            pivot_SE.to_csv(f'{save_dir}\\pivot_shockExp.csv')
+            pivot_combined.to_csv(f'{save_dir}\\pivot_combined.csv')
+            
+            plt.show()
+    
+    return axialForceScaled, axialForceScaled_SE, axialForceScaled_combined
 
 
 
@@ -1535,3 +2575,305 @@ def max_min_finder(ds_by_case,x,y):
 
 
 
+
+
+
+
+
+
+
+
+
+'''
+
+"""
+#------------------------------------------------------------------------------------------------------------------------------------#
+                                                Plotting Separation Length Vs Re_L
+#------------------------------------------------------------------------------------------------------------------------------------#
+"""
+
+
+
+
+
+
+
+# Plot Re vs Lsep/Lwidth with markers colored by Mach and h/L in the legend
+# Plot Re vs Lsep/Lwidth with markers colored by Mach (1.5–4.5).
+# h/L groups are shown as separate lines with a legend.
+
+# Re vs Lsep/Lwidth with markers colored by Mach (1.5…4.5) and lines per h/L.
+
+# This version avoids regex brittleness by matching known Mach tags directly.
+
+
+import numpy as np
+import re
+from collections import defaultdict
+import matplotlib.pyplot as plt
+import matplotlib.cm as cm
+from matplotlib.colors import BoundaryNorm
+from matplotlib.cm import ScalarMappable
+
+
+
+# ---------------- helpers ---------------- #
+def get_hl_Mach(key: str):
+    # Handles negative numbers, decimals, scientific notation
+    m = re.search(r'h[_-]?l[_-]?(-?[0-9]*\.?[0-9]+(?:[eE][-+]?[0-9]+)?)', key, flags=re.I)
+    return float(m.group(1)) if m else None
+
+# Simple & robust Mach extractor:
+# checks for 'mach_1.5', 'mach_2.0', … and also 'mach_1_5' style.
+MACH_LEVELS = np.arange(1.5, 4.5 , 0.5)  # 1.5, 2.0, …, 4.5
+
+
+
+def extract_mach_from_filename(key: str, mach_levels: list) -> float:
+    """
+    Extract Mach number from filename.
+    
+    Args:
+        key: String containing Mach number (e.g., 'h_l_0.030_Mach_1.0' or 'h_l_0.030_Mach_1_5')
+        mach_levels: List of possible Mach values to search for
+    
+    Returns:
+        float: Extracted Mach number or np.nan if not found
+    
+    Examples:
+        >>> extract_mach_from_filename("h_l_0.030_Mach_1.0", [1.0, 1.5, 2.0])
+        1.0
+        >>> extract_mach_from_filename("h_l_0.030_Mach_2_5", [1.0, 1.5, 2.0, 2.5])
+        2.5
+    """
+    s = key.lower()
+    
+    for mv in mach_levels:
+        # Create pattern variations
+        # For mv=2.5: creates "mach_2.5" and "mach_2_5"
+        # For mv=1.0: creates "mach_1.0" and "mach_1_0"
+        tag_dot = f"mach_{mv:.1f}"        # e.g., "mach_2.5"
+        tag_us = tag_dot.replace(".", "_") # e.g., "mach_2_5"
+        
+        # Check if either pattern exists in the filename
+        if tag_dot in s or tag_us in s:
+            return float(f"{mv:.1f}")
+    
+    return np.nan
+
+
+
+
+
+
+
+def Re_sepLength(ds_by_case, x,y,Re):
+
+    # ---------------- filter + group by h/L ----------------
+    min_hl, max_hl = 0.02, 0.09
+    
+    keys = ds_by_case.keys()
+    filtered_keys = [
+        k for k in keys
+        if (get_hl(k) is not None and min_hl <= get_hl(k) <= max_hl and "Mach_0.5" not in k)
+    ]
+    
+    groups = defaultdict(list)
+    for k in filtered_keys:
+        groups[get_hl(k)].append(k)
+    
+        # ---------------- discrete Mach mapping for colorbar ----------------
+        # Create discrete bins with boundaries half-way between the levels.
+        M0_bounds = np.linspace(1.5, 4.0, len(MACH_LEVELS) + 1)
+        cmap_mach = cm.get_cmap("viridis", len(MACH_LEVELS))   # 7 distinct colors
+        norm = BoundaryNorm(M0_bounds, cmap_mach.N)
+        
+        
+        
+        # line colors per h/L (legend)
+        cmap_lines = cm.get_cmap("plasma", len(groups))
+        
+        # ---------------- plotting ----------------
+        fig, ax = plt.subplots(figsize=(8, 6))
+        scatter_ref = None
+        unmatched = 0
+        
+    for idx, section_key in enumerate(ds_by_case):
+        
+        # Getting x run # 
+        x_run = x[section_key]
+        y_run = y[section_key]
+
+        #Plotting # 
+        ax.plot(x, y , color=cmap_lines(i), lw=4, label=f"h/L = {hl:.2f}")
+    
+        # markers: color by Mach  #
+        mask_col = mask_xy & np.isfinite(ms)
+        if np.any(mask_col):
+            sc = ax.scatter(xs[mask_col], ys[mask_col], c=ms[mask_col],
+                            cmap=cmap_mach, norm=norm,
+                            s=70, marker='o', edgecolor='k', linewidths= 1.35,
+                            zorder=5, alpha=0.98)
+            scatter_ref = sc
+            
+
+            
+            
+            
+        # (Optional) show unmatched as neutral markers so you can spot them
+        mask_neu = mask_xy & ~np.isfinite(ms)
+        if np.any(mask_neu):
+            ax.scatter(xs[mask_neu], ys[mask_neu],
+                       color='white', edgecolor='k', linewidths=0.35,
+                       s=46, marker='o', zorder=4, alpha=0.9)
+    
+    # ---------------- colorbar with exact Mach ticks ----------------
+    if scatter_ref is not None:
+        cbar = fig.colorbar(scatter_ref, ax=ax, pad=0.02, ticks=MACH_LEVELS)
+        cbar.set_label("Mach Number", fontsize = 18)
+        cbar.ax.tick_params(labelsize = 18)
+    else:
+        # fallback colorbar so layout stays stable; also tell you why
+        sm = ScalarMappable(norm=norm, cmap=cmap_mach); sm.set_array([])
+        fig.colorbar(sm, ax=ax, pad=0.02, ticks=MACH_LEVELS).set_label("Mach")
+        print("Warning: no markers received a Mach color. Check key naming.")
+    
+    
+    
+    
+    # ---------------- cosmetics ----------------
+    ax.set_title("Normalized Separation Length vs Reynolds Number", fontsize = 24, pad = 15)
+    ax.set_xlabel("Reynolds Number", fontsize = 21)
+    ax.set_ylabel(r"$L_{separation}/L_{Length}$", fontsize = 21)
+    ax.tick_params(labelsize = 14)
+    
+    ax.grid(True, which="both")
+    ax.legend(title="Cases", loc = 'best', bbox_to_anchor = (0.4, 0.3), fontsize = 12)
+    fig.tight_layout()
+    plt.show()
+    
+    # Optional: see how many keys didn’t contain a Mach tag
+    if unmatched:
+        print(f"{unmatched} case(s) had no recognizable Mach tag (e.g., 'mach_2.5').")
+'''        
+    
+
+
+
+
+"""
+#------------------------------------------------------------------------------------------------------------------------------------#
+                                                Plotting Separation Length Vs Mach Number
+#------------------------------------------------------------------------------------------------------------------------------------#
+"""
+
+import re
+from collections import defaultdict
+import matplotlib.pyplot as plt
+import matplotlib.cm as cm
+import matplotlib as mpl
+
+
+
+
+
+# ---------------- helpers ---------------- #
+def get_hl(key: str):
+    m = re.search(r'h[_-]?l[_-]?(-?[0-9]*\.?[0-9]+(?:[eE][-+]?[0-9]+)?)', key, flags=re.I)
+    return float(m.group(1)) if m else None
+
+MACH_LEVELS = np.arange(1.5, 4.5, 0.5)  # 1.5, 2.0, …, 4.0
+
+def extract_mach_from_filename(key: str, mach_levels: list) -> float:
+    s = key.lower()
+    for mv in mach_levels:
+        tag_dot = f"mach_{mv:.1f}"
+        tag_us = tag_dot.replace(".", "_")
+        if tag_dot in s or tag_us in s:
+            return float(f"{mv:.1f}")
+    return np.nan
+
+
+def mach_vs_sepLength(ds_by_case, x, y, sep_length_nonDim):
+
+    # ---------------- publication style ----------------
+    mpl.rcParams['font.family'] = 'serif'
+    mpl.rcParams['font.serif'] = ['Times New Roman']
+    mpl.rcParams['font.size'] = 18
+    mpl.rcParams['axes.labelsize'] = 10
+    mpl.rcParams['axes.titlesize'] = 21
+    mpl.rcParams['xtick.labelsize'] = 8
+    mpl.rcParams['ytick.labelsize'] = 8
+    mpl.rcParams['legend.fontsize'] = 10
+    mpl.rcParams['figure.titlesize'] = 21
+    mpl.rcParams['axes.linewidth'] = 1
+    mpl.rcParams['lines.linewidth'] = 1.5
+    mpl.rcParams['grid.linewidth'] = 0.5
+    mpl.rcParams['figure.dpi'] = 150
+    mpl.rcParams['savefig.dpi'] = 600
+
+    # ---------------- filter + group by h/L ----------------
+    min_hl, max_hl = 0.02, 0.09
+
+    keys = ds_by_case.keys()
+    filtered_keys = [
+        k for k in keys
+        if (get_hl(k) is not None and min_hl <= get_hl(k) <= max_hl and "Mach_0.5" not in k)
+    ]
+
+    groups = defaultdict(list)
+    for k in filtered_keys:
+        groups[get_hl(k)].append(k)
+
+    # ---------------- style definitions ----------------
+    hl_values = sorted(groups.keys())
+    cmap_lines = cm.get_cmap("viridis", len(hl_values))
+    markers = ['o', 's', '^', 'D', 'v', 'p', 'h', '*']
+
+    # ---------------- plotting ----------------
+    fig, ax = plt.subplots(figsize=(6, 4))
+
+    for i, hl_val in enumerate(hl_values):
+        group_keys = groups[hl_val]
+
+        machs = []
+        seps = []
+        for k in group_keys:
+            m = extract_mach_from_filename(k, MACH_LEVELS)
+            if np.isnan(m):
+                continue
+            if k not in sep_length_nonDim:
+                continue
+            machs.append(m)
+            seps.append(sep_length_nonDim[k])
+
+        if len(machs) == 0:
+            continue
+
+        order = np.argsort(machs)
+        machs = np.array(machs)[order]
+        seps = np.array(seps)[order]
+
+        ax.plot(machs, seps,
+                color=cmap_lines(i),
+                marker=markers[i % len(markers)],
+                markersize=6,
+                markeredgecolor='black',
+                markeredgewidth=0.6,
+                label=f"h/l = {hl_val:.2f}")
+
+    # ---------------- formatting (no hardcoded fontsizes) ----------------
+    ax.set_xlabel("Mach Number")
+    ax.set_ylabel(r"$L_{\mathrm{sep}} / L_{\mathrm{width}}$")
+    ax.set_title("Normalized Separation Length vs Mach Number", fontweight='bold')
+    ax.set_xticks(MACH_LEVELS)
+    ax.set_xlim([MACH_LEVELS[0] - 0.2, MACH_LEVELS[-1] + 0.2])
+    ax.grid(True, alpha=0.3)
+    ax.legend(title="h/l", loc='upper left',
+              bbox_to_anchor=(1.02, 1), borderaxespad=0)
+
+    fig.tight_layout()
+    plt.savefig('sep_length_vs_mach.png', bbox_inches='tight')
+    plt.show()
+
+    return machs

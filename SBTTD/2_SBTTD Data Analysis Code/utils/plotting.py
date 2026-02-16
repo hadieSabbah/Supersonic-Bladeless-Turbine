@@ -271,7 +271,7 @@ def plot_scaled_axialForce_vs_hl(results_dict, h_l_values, save=False):
     ax.set_xlabel('h/l')
     ax.set_ylabel(r'$F_{RANS} / F_{Small Pert}$')
     ax.set_title('Scaled Axial Force vs h/l\n(Varying Mach Number)')
-    ax.legend(title='Mach Number', loc='best', frameon=False, boarderaxespad = 0.1)
+    ax.legend(title='Mach Number', frameon=False,bbox_to_anchor = (1.05,1) , borderaxespad = 0.1)
     ax.grid(True, alpha=0.3)
     
     # Add horizontal line at y=1 for reference

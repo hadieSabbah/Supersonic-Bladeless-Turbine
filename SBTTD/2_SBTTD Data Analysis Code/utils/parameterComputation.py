@@ -142,7 +142,7 @@ def variableImporterMasked(ds_by_case, min_l, max_l, mask_input = True):
         q_dot[key] = ds_by_case[key]["Qdot"].data
         
         # Turbulent Quantities #
-        mu_tur[key] = ds_by_case[key]["Mutur"].data
+        #mu_tur[key] = ds_by_case[key]["Mutur"].data
         
         
         if mask_input == True:
@@ -188,7 +188,7 @@ def variableImporterMasked(ds_by_case, min_l, max_l, mask_input = True):
             q_dot[key] = q_dot[key][mask]
             
             # Turbulent Quantities #
-            mu_tur[key] = mu_tur[key][mask]
+            #mu_tur[key] = mu_tur[key][mask]
         
         # Compute Separation #
         first_index_tau = np.argmax(tau_x[key] < 0)
@@ -196,7 +196,8 @@ def variableImporterMasked(ds_by_case, min_l, max_l, mask_input = True):
         tau_separation_idx[key] = first_index_tau
     
     return (y_plus, tau_x, tau_y, tau_separation, tau_separation_idx, 
-            x, y, T, P, Px, Py, P0, rho, mach, omega_z, u, v, q_dot, mu_tur)
+            x, y, T, P, Px, Py, P0, rho, mach, omega_z, u, v, q_dot)
+            #, mu_tur)
             
     
     
