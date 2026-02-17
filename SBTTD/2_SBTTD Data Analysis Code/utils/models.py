@@ -1816,15 +1816,17 @@ def smallPertSolver_with_SE(h_l_values, ds_by_case, plotting=False):
             
             # Save to CSV
             df_results.to_csv(
-                r'C:\Users\hhsabbah\Documents\01_Bladeless_Proj\32_Geometry Code\Graphs\axial_force_comparison.csv',
+                r'C:\Users\hhsabbah\Documents\01_Bladeless_Proj\35_Git\Supersonic-Bladeless-Turbine\SBTTD\reports\figures\Mach Study\axial_force_comparison.csv',
                 index=False
             )
             pivot_sp.to_csv(
-                r'C:\Users\hhsabbah\Documents\01_Bladeless_Proj\32_Geometry Code\Graphs\axial_force_pivot_smallPert.csv'
+                r'C:\Users\hhsabbah\Documents\01_Bladeless_Proj\35_Git\Supersonic-Bladeless-Turbine\SBTTD\reports\figures\Mach Study\axial_force_pivot_smallPert.csv'
             )
             pivot_SE.to_csv(
-                r'C:\Users\hhsabbah\Documents\01_Bladeless_Proj\32_Geometry Code\Graphs\axial_force_pivot_shockExp.csv'
+                r'C:\Users\hhsabbah\Documents\01_Bladeless_Proj\35_Git\Supersonic-Bladeless-Turbine\SBTTD\reports\figures\Mach Study\axial_force_pivot_shockExp.csv'
             )
+            
+            
             
             plt.show()
     
@@ -2338,7 +2340,7 @@ def smallPertSolver_combined(h_l_values, ds_by_case, plotting=False):
             pivot_combined = df_results.pivot_table(
                 values='Diff_Combined [%]', index='h/l', columns='M_infty', aggfunc='mean')
             
-            save_dir = r'C:\Users\hhsabbah\Documents\01_Bladeless_Proj\32_Geometry Code\Graphs'
+            save_dir = r'C:\Users\hhsabbah\Documents\01_Bladeless_Proj\35_Git\Supersonic-Bladeless-Turbine\SBTTD\reports\figures\Mach Study'
             df_results.to_csv(f'{save_dir}\\axial_force_comparison_3theories.csv', index=False)
             pivot_SP.to_csv(f'{save_dir}\\pivot_smallPert.csv')
             pivot_SE.to_csv(f'{save_dir}\\pivot_shockExp.csv')

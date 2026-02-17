@@ -1,0 +1,2 @@
+h/l,M_infty,F_axial_RANS [N/m],F_axial_SmallPert [N/m],F_axial_ShockExp [N/m],Diff_SmallPert [%],Diff_ShockExp [%],Case_Key
+0.02,1.5,1450.4181,1363.3630884348627,1270.4925140166893,-6.38531313660462,-14.161876187273602,h_l_0.02_Mach_1.5

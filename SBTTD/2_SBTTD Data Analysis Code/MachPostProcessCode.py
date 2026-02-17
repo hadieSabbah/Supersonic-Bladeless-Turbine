@@ -681,6 +681,24 @@ for key in x.keys():
     ax.legend()
     
     plt.show()
+    
+    
+    
+    
+    
+    
+    
+#%%
+"""
+#------------------------------------------------------------------------------------------------------------------------------------#
+                                      Plotting pressure gradients across the wavy section
+#------------------------------------------------------------------------------------------------------------------------------------#
+""" 
+
+h_l_list = np.arange(0.02, 0.09 + 0.01, 0.01)
+
+for h_l in h_l_list:
+    plotter_multiPerCase(x, Px, "x", "$P_{x}$", "[m]", "[Pa]", filter_param = "h_l", filter_value = h_l,  labels=None, cmap_name='cividis', save=False, title=None)
 
 
 #%%  
