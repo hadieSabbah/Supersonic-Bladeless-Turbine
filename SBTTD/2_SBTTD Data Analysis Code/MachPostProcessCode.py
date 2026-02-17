@@ -28,7 +28,7 @@ os.chdir(new_dirc)
 
 from utils.parameterComputation import variableImporterMasked, ReCompute, yplusThreshold
 from utils.dataload_util import assign_dir, bigImport, runSaver, runLoader, file_pathFinder, load_minfo_step_force
-from utils.plotting import plotter, plotter_multi_all, plotter_multiPerCase, subplotter, plot_scaled_axialForce_vs_hl
+from utils.plotting import plotter, plotter_multi_all, plotter_multiPerCase, subplotter, plot_scaled_axialForce_vs_hl, subplotter_multiPerCase
 from utils.models import analyze_geometries, get_first_shock_pressures, offsetGeomPoints, smallPertSolver, find_sepLength, max_min_finder,mach_vs_sepLength, smallPertSolver_with_SE, smallPertSolver_combined
 
 
@@ -695,11 +695,23 @@ for key in x.keys():
 #------------------------------------------------------------------------------------------------------------------------------------#
 """ 
 
-h_l_list = np.arange(0.02, 0.09 + 0.01, 0.01)
+h_l_list = np.arange(2, 9 + 1, 1) * 0.01
 
 for h_l in h_l_list:
     plotter_multiPerCase(x, Px, "x", "$P_{x}$", "[m]", "[Pa]", filter_param = "h_l", filter_value = h_l,  labels=None, cmap_name='cividis', save=False, title=None)
 
+
+subplotter_multiPerCase(
+    x, Px,
+    x_string='x',
+    y_string=r'$\frac{dp}{dx}$',
+    unit_x='[m]',
+    unit_y='[Pa/m]',
+    filter_param='h_l',
+    filter_values=h_l_list,
+    vary_param='mach',
+    save=False
+)
 
 #%%  
 """
