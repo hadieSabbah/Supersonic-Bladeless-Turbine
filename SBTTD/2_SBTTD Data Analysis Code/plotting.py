@@ -7,6 +7,73 @@ import re
 from pathlib import Path
 
 
+
+
+
+
+
+
+
+
+# Defining all figure sizes #
+
+def plotter(x, y, x_string, y_string, unit_x, unit_y, save = True, return_axes = False):
+    # Set publication-quality parameters
+    mpl.rcParams['font.family'] = 'serif'
+    mpl.rcParams['font.serif'] = ['Times New Roman']  # Or 'DejaVu Serif'
+    mpl.rcParams['font.size'] = 18  # Base font size
+    mpl.rcParams['axes.labelsize'] = 10
+    mpl.rcParams['axes.titlesize'] = 21
+    mpl.rcParams['xtick.labelsize'] = 8
+    mpl.rcParams['ytick.labelsize'] = 8
+    mpl.rcParams['legend.fontsize'] = 10
+    mpl.rcParams['figure.titlesize'] = 21
+
+    # Line widths
+    mpl.rcParams['axes.linewidth'] = 1
+    mpl.rcParams['lines.linewidth'] = 1.5
+    mpl.rcParams['grid.linewidth'] = 0.5
+
+    # DPI for screen and saving
+    mpl.rcParams['figure.dpi'] = 150  # Screen display
+    mpl.rcParams['savefig.dpi'] = 600  # Save at high resolution
+    
+    # Defining labels #
+    x_string_label = x_string + " " + unit_x
+    y_string_label = y_string + " " + unit_y
+    figure_string_title = x_string + " Vs " + y_string
+    
+    
+    # Plotting figure # 
+    fig, ax = plt.subplots(figsize=(3.5, 2.5))
+    ax.plot(x, y)
+    ax.set_title(figure_string_title)
+    ax.set_xlabel(x_string_label)
+    ax.set_ylabel(y_string_label)
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+
+    # Save with tight layout
+    plt.tight_layout()
+    
+    # Showing the plot # 
+    if not return_axes:
+        plt.show()
+    
+    if save == True:
+        
+        # Defining the directory and the figure name #
+        dirc = r"C:\Users\hhsabbah\Documents\01_Bladeless_Proj\35_Git\Supersonic-Bladeless-Turbine\SBTTD\reports\figures\Mach Study"
+        figName = f"{x_string}Vs{y_string}"
+        
+        # Saving the figures # 
+        plt.savefig(rf'{dirc}\{figName}.png', dpi=600, bbox_inches='tight')
+        plt.savefig(rf'{dirc}\{figName}.pdf', bbox_inches='tight')  # Vector format (best!)
+    if return_axes:
+        return fig, ax
+      
+    
+    
 def subplotter_multiPerCase(x_dict, y_dict, x_string, y_string, unit_x, unit_y,
                             filter_param, filter_values, vary_param='mach',
                             cmap_name='cividis', figsize=None, save=False, 
@@ -19,7 +86,6 @@ def subplotter_multiPerCase(x_dict, y_dict, x_string, y_string, unit_x, unit_y,
     filter_values : list
         List of values to filter by (one subplot per value)
     """
-    import re
     
     # Set publication-quality parameters
     mpl.rcParams['font.family'] = 'serif'
@@ -112,65 +178,6 @@ def subplotter_multiPerCase(x_dict, y_dict, x_string, y_string, unit_x, unit_y,
         plt.savefig(rf'{dirc}\{figName}.pdf', bbox_inches='tight')
     
     return fig, axes
-
-# Defining all figure sizes #
-
-def plotter(x, y, x_string, y_string, unit_x, unit_y, save = True, return_axes = False):
-    # Set publication-quality parameters
-    mpl.rcParams['font.family'] = 'serif'
-    mpl.rcParams['font.serif'] = ['Times New Roman']  # Or 'DejaVu Serif'
-    mpl.rcParams['font.size'] = 18  # Base font size
-    mpl.rcParams['axes.labelsize'] = 10
-    mpl.rcParams['axes.titlesize'] = 21
-    mpl.rcParams['xtick.labelsize'] = 8
-    mpl.rcParams['ytick.labelsize'] = 8
-    mpl.rcParams['legend.fontsize'] = 10
-    mpl.rcParams['figure.titlesize'] = 21
-
-    # Line widths
-    mpl.rcParams['axes.linewidth'] = 1
-    mpl.rcParams['lines.linewidth'] = 1.5
-    mpl.rcParams['grid.linewidth'] = 0.5
-
-    # DPI for screen and saving
-    mpl.rcParams['figure.dpi'] = 150  # Screen display
-    mpl.rcParams['savefig.dpi'] = 600  # Save at high resolution
-    
-    # Defining labels #
-    x_string_label = x_string + " " + unit_x
-    y_string_label = y_string + " " + unit_y
-    figure_string_title = x_string + " Vs " + y_string
-    
-    
-    # Plotting figure # 
-    fig, ax = plt.subplots(figsize=(3.5, 2.5))
-    ax.plot(x, y)
-    ax.set_title(figure_string_title)
-    ax.set_xlabel(x_string_label)
-    ax.set_ylabel(y_string_label)
-    ax.legend()
-    ax.grid(True, alpha=0.3)
-
-    # Save with tight layout
-    plt.tight_layout()
-    
-    # Showing the plot # 
-    if not return_axes:
-        plt.show()
-    
-    if save == True:
-        
-        # Defining the directory and the figure name #
-        dirc = r"C:\Users\hhsabbah\Documents\01_Bladeless_Proj\35_Git\Supersonic-Bladeless-Turbine\SBTTD\reports\figures\Mach Study"
-        figName = f"{x_string}Vs{y_string}"
-        
-        # Saving the figures # 
-        plt.savefig(rf'{dirc}\{figName}.png', dpi=600, bbox_inches='tight')
-        plt.savefig(rf'{dirc}\{figName}.pdf', bbox_inches='tight')  # Vector format (best!)
-    if return_axes:
-        return fig, ax
-        
-
 
 def subplotter(nrows, ncols, x_data, y_data, x_strings, y_strings, 
                unit_x, unit_y, subplot_titles=None, figsize=None, 
