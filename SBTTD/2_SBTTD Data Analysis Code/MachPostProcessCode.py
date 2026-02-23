@@ -14,12 +14,12 @@ import os
 """
 
 
-
+#%%
 # Automaticalyl changing the working directory # 
 new_dirc = r"C:\Users\hhsabbah\Documents\01_Bladeless_Proj\35_Git\Supersonic-Bladeless-Turbine\SBTTD\2_SBTTD Data Analysis Code"
 os.chdir(new_dirc)
 
-
+#%%
 # Importing modules # 
 # In your notebook/script, run this FIRST:
 import utils.plotting
@@ -48,7 +48,7 @@ ds_by_case, ds_by_case_quad, ds_by_case_inlet = bigImport(base_dir,fileName)
 
 #%% Importing processed data ###
 
-ds_by_case,ds_by_case_quad, ds_by_case_inlet = runLoader() 
+ds_by_case,ds_by_case_quad, ds_by_case_inlet = runLoader(load_dir_dic = r"C:\Users\hadie\Documents\5_Code\1_Research\Supersonic-Bladeless-Turbine\SBTTD\data\processed\Mach Study") 
 
 
 
@@ -3319,23 +3319,29 @@ def generate_axial_force_plot_dual_mach(df, output_path='axial_force_dual_plot_m
     
     
     
+    
     # =========================================================================
     # Left plot: Force vs h/l (one line per Mach number)
     # =========================================================================
-    for i, key in enumerate(ds_by_case):
+    for i, mach in enumerate(mach_numbers):
         color = cmap_mach(i)
-        print(pstatic_list[i])
-        print(mach)
-        y_vals = [pivot_hl.loc[h_l, mach] for h_l in h_l_values]
-        ax1.plot(h_l_values, y_vals / first_shock_pressures[key], 'o-', color=color, linewidth=2, 
-                 markersize=8, label=f'M = {mach_numbers[i]}') # Divide by y_values to be able to non-dim the solution CHANGE HERE 
         
+        # Get y values from the pivot table
+        y_vals = np.array([pivot_hl.loc[h_l, mach] for h_l in h_l_values])
+        
+        # Build the key to get pstatic - use first h/l value for this Mach
+        # (assuming pstatic only depends on Mach, not h/l)
+        pstatic_key = f"h_l_{h_l_values[0]:.2f}_Mach_{mach}"
+        pstatic = pstatic_list[i]
+        
+        ax1.plot(h_l_values, y_vals / pstatic, 'o-', color=color, linewidth=2, 
+                 markersize=8, label=f'M = {mach}')
         # Optimal reference line
         #ax1.plot(0.05, tau_x_by_mach[mach], color=color, marker = 's', markersize = 10)
         #ax1.axhline(y=tau_x_by_mach[mach], color=color, linestyle='--', 
                     #alpha=0.4, linewidth=1.5) # DO THE SAME THING HERE
     
-    ax1.set_title("Axial Force / P_after vs h/l", fontsize=28, fontweight='bold')
+    ax1.set_title(r"Axial Force / $P_{static}$ vs h/l", fontsize=28, fontweight='bold')
     ax1.set_xlabel("h/l", fontsize = 21)
     ax1.set_ylabel(ylabel, fontsize=18)
     ax1.tick_params(labelsize=16)
@@ -3390,6 +3396,12 @@ def generate_axial_force_plot_dual_mach(df, output_path='axial_force_dual_plot_m
 
 
 
+   
+   
+   
+   
+
+
 # =============================================================================
 # Usage
 # =============================================================================
@@ -3397,7 +3409,7 @@ def generate_axial_force_plot_dual_mach(df, output_path='axial_force_dual_plot_m
 # Single plot: Force vs h/l
 generate_axial_force_plot_mach(
     df_comparison, 
-    output_path=r'C:\Users\hhsabbah\Documents\01_Bladeless_Proj\32_Geometry Code\Graphs\Mach Study\axialForce_vs_hl_plot.png',
+    output_path=r'C:\Users\hadie\Documents\5_Code\1_Research\Supersonic-Bladeless-Turbine\SBTTD\reports\figures\Mach Study\axialForce_vs_hl_plot.png',
     title="Axial Force vs h/l\n(Varying Mach Number)",
     ylabel="Axial Force [N/m]",
     show_optimal=True
@@ -3406,7 +3418,7 @@ generate_axial_force_plot_mach(
 # Normalized version
 generate_axial_force_plot_mach(
     df_comparisonNorm, 
-    output_path=r'C:\Users\hhsabbah\Documents\01_Bladeless_Proj\32_Geometry Code\Graphs\Mach Study\axialForceNorm_vs_hl_plot.png',
+    output_path=r'C:\Users\hadie\Documents\5_Code\1_Research\Supersonic-Bladeless-Turbine\SBTTD\reports\figures\Mach Study\axialForceNorm_vs_hl_plot.png',
     title="Axial Force per Unit Length vs h/l\n(Varying Mach Number)",
     ylabel="Axial Force per Unit Length [N/m]",
     show_optimal=True
@@ -3414,12 +3426,24 @@ generate_axial_force_plot_mach(
 
 # Dual panel plot showing both perspectives
 generate_axial_force_plot_dual_mach(
-    df_comparison, 
-    output_path=r'C:\Users\hhsabbah\Documents\01_Bladeless_Proj\32_Geometry Code\Graphs\Mach Study\axialForce_dual_plot.png',
+    df_comparison,
+    output_path=r'C:\Users\hadie\Documents\5_Code\1_Research\Supersonic-Bladeless-Turbine\SBTTD\reports\figures\Mach Study\axialForce_dual_plot.png',
     title="Axial Force Trends",
-    ylabel="Axial Force / Pstatic [m]"
+    ylabel=r"Axial Force / $P_{static}$"
 )
 
+
+#%%
+
+# Claude code: 
+   
+
+   
+   
+   
+   
+   
+   
 #%% TEST WITH CLAUDE
 import numpy as np
 import pandas as pd
