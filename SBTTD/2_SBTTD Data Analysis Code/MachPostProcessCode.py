@@ -4,7 +4,7 @@ from pathlib import Path
 import sympy as sp
 import tecplot as tp
 import os 
-
+import matplotlib.pyplot as plt
 
 """
 #------------------------------------------------------------------------------------------------------------------------------------#
@@ -48,7 +48,7 @@ ds_by_case, ds_by_case_quad, ds_by_case_inlet = bigImport(base_dir,fileName)
 
 #%% Importing processed data ###
 
-ds_by_case,ds_by_case_quad, ds_by_case_inlet = runLoader(load_dir_dic = r"C:\Users\hadie\Documents\5_Code\1_Research\Supersonic-Bladeless-Turbine\SBTTD\data\processed\Mach Study") 
+ds_by_case,ds_by_case_quad, ds_by_case_inlet = runLoader(load_dir_dic = r"C:\Users\hhsabbah\Documents\01_Bladeless_Proj\35_Git\Supersonic-Bladeless-Turbine\SBTTD\data\processed\Mach Study") 
 
 
 
@@ -188,281 +188,162 @@ print(missing)  # ['M2.0_P0_0.5', 'M3.0_P0_1.2', ...]
     
     
     
-#%% Testing code with Claude  ####
+#%% Boundary layer edge detection code  ####
+
+import matplotlib as pyplot
+from tecplot.constant import PlotType
+"""
+#------------------------------------------------------------------------------------------------------------------------------------#
+                                                 Boundary layer thickness detection
+#------------------------------------------------------------------------------------------------------------------------------------#
+
+"""
 
 
-import numpy as np
-import matplotlib.pyplot as plt
+# Connecting to Tecplot # 
+tp.session.connect()
+
+
+# Pre-Allocating Variables for boundary layer edge # 
+delta_n_dict = {}
+tau_w_dict = {}
+
+# Defining variables # 
+Nx = 500 # Number of Nx discrete points
+Ny = 300 # Number of discrete points in the y direction in the line. 
+bl_h = 3/1000 # Boundary layer height you're suspecting. Units in [m]
+stride = 1
+num_points = Ny
+
+# Defining all the directories # 
+base_dir = Path(r"C:\Users\hhsabbah\Documents\01_Bladeless_Proj\35_Git\Supersonic-Bladeless-Turbine\SBTTD\data\raw\Mach Study 2")
+rootDir = base_dir # this is the root directory to the parametric study solution files
+subDirs1 = [p for p in rootDir.iterdir() if p.is_dir()]
+
+fileName = "mcfd_tec.bin"
+subDirs2 = [p for d in subDirs1 for p in d.iterdir() if p.is_dir()]  # flattened
+file_paths = [p / fileName for p in subDirs2]
 
 
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-def compute_boundary_layer_thickness(x_quad, y_quad, omega_z_quad, rho_quad,
-                                     x_wall, tau_x_wall,
-                                     x_min=0.0, x_max=0.1,
-                                     num_stations=100,
-                                     x_tolerance=0.001,
-                                     vorticity_threshold=100.0,
-                                     density_gradient_threshold=1000.0):
-    """
-    Compute boundary layer thickness based on vorticity criterion.
+for idx, key in enumerate(ds_by_case.keys()):
     
-    Excludes:
-    - Locations where flow is separated (tau_x < 0)
-    - Locations where shocks are present (large density gradient)
     
-    Parameters:
-    -----------
-    x_quad, y_quad, omega_z_quad, rho_quad : dict
-        Quadrant (full domain) data
-    x_wall, tau_x_wall : dict
-        Wall data (x-locations and wall shear stress)
-    x_min, x_max : float
-        Range of x to analyze
-    num_stations : int
-        Number of x-stations to evaluate
-    x_tolerance : float
-        Tolerance for finding points near x-station
-    vorticity_threshold : float
-        Absolute vorticity threshold for BL edge
-    density_gradient_threshold : float
-        If |d(rho)/dy| exceeds this, consider it a shock
-        
-    Returns:
-    --------
-    delta : dict
-        Boundary layer thickness (NaN where separated or shock)
-    x_stations : ndarray
-        x-locations where delta was computed
-    separation_mask : dict
-        Boolean array - True where flow is separated
-    shock_mask : dict
-        Boolean array - True where shock is detected
-    """
+    # Import case into tecplot # 
+    tp.new_layout()
+    tp.data.load_tecplot(file_paths[idx].as_posix())
+    fr = tp.active_frame()
+    fr.plot_type = PlotType.Cartesian2D
     
-    # Define x-stations
-    x_stations = np.linspace(x_min, x_max, num_stations)
     
-    # Output dictionaries
-    delta = {}
-    separation_mask = {}
-    shock_mask = {}
+    # Finding the gradient for x and y #
+    dx_ds = np.gradient(x[key])
+    dy_ds = np.gradient(y[key])
     
-    # Loop through each case
-    for key in x_quad.keys():
-        
-        # Extract quad arrays
-        x_arr = x_quad[key]
-        y_arr = y_quad[key]
-        omega_arr = omega_z_quad[key]
-        rho_arr = rho_quad[key]
-        
-        # Extract wall arrays
-        x_w = x_wall[key]
-        tau_x_w = tau_x_wall[key]
-        
-        # Storage for this case
-        delta_values = np.zeros(num_stations)
-        is_separated = np.zeros(num_stations, dtype=bool)
-        is_shock = np.zeros(num_stations, dtype=bool)
-        
-        # Loop through each x-station
-        for i, x_loc in enumerate(x_stations):
+    # Finding the Normal values for line extraction # 
+    nx,ny = -dy_ds,dx_ds
+    norm = np.hypot(nx,ny)
+    
+    # Avoidinig Division by zero #
+    norm = np.where(norm < 1e-12,np.nan, norm)
+    ux,uy = nx/norm , ny/norm 
+    
+    # Raking End points # 
+    x_final = x[key] + bl_h * ux
+    y_final = y[key] + bl_h * uy
+    ok = np.isfinite(x_final) & np.isfinite(y_final)
+    
+    # Apply Stride to reduce th enumber of profiles #
+    x_start = x[key][ok][::stride]
+    y_start = y[key][ok][::stride]
+    
+    x_end = x_final[ok][::stride]
+    y_end = y_final[ok][::stride]
+    
+    # Build arrays # 
+    n = min(len(x_start), len(y_start), len(x_end), len(y_end))
+    x_pairs = np.column_stack((x_start[:n], x_end[:n]))
+    y_pairs = np.column_stack((y_start[:n], y_end[:n]))
+    
+    # Pre-allocate output arrays
+    N = x_pairs.shape[0]
+    delta_n_dict[key] = np.full(N, np.nan, dtype=float) #units should be in meters 
+    tau_w_dict[key] = np.full(N, np.nan, dtype=float)
+    
+    
+    # Printing to track which case is being processed # 
+    print(70*"==")
+    print(f"Processing {file_paths[idx]}")
+    print(70*"==")
+    print("\n")
+    
+    
+    for i in range(N):
+            # Shear Stress Computation for if else statement # 
+            p0 = (float(x_pairs[i, 0]), float(y_pairs[i, 0]), 0.0)
+            p1 = (float(x_pairs[i, 1]), float(y_pairs[i, 1]), 0.0)
             
-            # ---------------------------
-            # Step 1: Check for separation
-            # ---------------------------
-            # Find closest wall point to this x-station
-            wall_idx = np.argmin(np.abs(x_w - x_loc))
-            tau_x_local = tau_x_w[wall_idx]
+            # Using line to compute the results along the line # 
+            line = tp.data.extract.extract_line([p0, p1], num_points=num_points)
             
-            if tau_x_local < 0:
-                # Flow is separated here
-                delta_values[i] = np.nan
-                is_separated[i] = True
+            # Shear stress at the wall #
+            tau_x_line = line.values("Tau_x").as_numpy_array()[0]
+            print(f"shear stress = {tau_x_line} Pa")
+            
+
+            
+            if tau_x_line <= 0: 
+                print("------------Point skiped due to separation!\n")
                 continue
-            
-            # ---------------------------
-            # Step 2: Get points near x-station
-            # ---------------------------
-            mask = np.abs(x_arr - x_loc) < x_tolerance
-            
-            if np.sum(mask) < 5:
-                delta_values[i] = np.nan
-                continue
-            
-            # Sort by y
-            y_local = y_arr[mask]
-            omega_local = omega_arr[mask]
-            rho_local = rho_arr[mask]
-            
-            sort_idx = np.argsort(y_local)
-            y_sorted = y_local[sort_idx]
-            omega_sorted = omega_local[sort_idx]
-            rho_sorted = rho_local[sort_idx]
-            
-            # Wall location
-            y_wall_local = y_sorted[0]
-            
-            # ---------------------------
-            # Step 3: Check for shock
-            # ---------------------------
-            # Compute density gradient (d_rho/dy)
-            dy = np.diff(y_sorted)
-            d_rho = np.diff(rho_sorted)
-            
-            # Avoid division by zero
-            dy[dy == 0] = 1e-10
-            
-            rho_gradient = np.abs(d_rho / dy)
-            
-            if np.max(rho_gradient) > density_gradient_threshold:
-                # Shock detected at this x-station
-                delta_values[i] = np.nan
-                is_shock[i] = True
-                continue
-            
-            # ---------------------------
-            # Step 4: Find BL edge
-            # ---------------------------
-            abs_omega = np.abs(omega_sorted)
-            below_threshold = abs_omega < vorticity_threshold
-            
-            if not np.any(below_threshold):
-                y_edge = y_sorted[-1]
-            else:
-                edge_idx = np.argmax(below_threshold)
-                y_edge = y_sorted[edge_idx]
-            
-            # ---------------------------
-            # Step 5: Compute BL thickness
-            # ---------------------------
-            delta_values[i] = y_edge - y_wall_local
-        
-        # Store results
-        delta[key] = delta_values
-        separation_mask[key] = is_separated
-        shock_mask[key] = is_shock
+               
+            else: 
+                # Shear Stress Computation for if else statement # 
+                p0 = (float(x_pairs[i, 0]), float(y_pairs[i, 0]), 0.0)
+                p1 = (float(x_pairs[i, 1]), float(y_pairs[i, 1]), 0.0)
+                
+                # Using line to compute the results along the line # 
+                line = tp.data.extract.extract_line([p0, p1], num_points=num_points)
+                
+                # Shear stress at the wall #
+                tau_x_line = line.values("Tau_x").as_numpy_array()[0]
+
+                
+                
+                # Grab only needed vars
+                x_BL = line.values("X").as_numpy_array()
+                y_BL = line.values("Y").as_numpy_array()
+                U_Bl    = line.values("U").as_numpy_array()
+                V_Bl    = line.values("V").as_numpy_array()
+                P_Bl    = line.values("P").as_numpy_array()
+                Rho_Bl  = line.values("R").as_numpy_array()
+                tauy_Bl = line.values("Tau_y").as_numpy_array()
+                omega_z_Bl = line.values("Vort_z").as_numpy_array()
     
-    return delta, x_stations, separation_mask, shock_mask
+                tau_w = float(tau_x_line)
+                tau_w_dict[key][i] = tau_x_line
 
-
-
-
-
-
-
-def plot_bl_edge_validation(x_quad, y_quad, omega_z_quad, rho_quad,
-                            x_wall, y_wall, tau_x_wall,
-                            x_min=0.0, x_max=0.1,
-                            num_stations=50,
-                            x_tolerance=0.001,
-                            vorticity_threshold=100.0,
-                            density_gradient_threshold=1000.0):
-    """
-    Plot boundary layer edge detection with separation and shock regions marked.
-    """
     
-    # Compute BL thickness
-    delta, x_stations, separation_mask, shock_mask = compute_boundary_layer_thickness(
-        x_quad, y_quad, omega_z_quad, rho_quad,
-        x_wall, tau_x_wall,
-        x_min=x_min, x_max=x_max,
-        num_stations=num_stations,
-        x_tolerance=x_tolerance,
-        vorticity_threshold=vorticity_threshold,
-        density_gradient_threshold=density_gradient_threshold
-    )
+                # Finding the location at which the vorticity is almost equal to zero #
+                y_index = np.abs(omega_z_Bl - 0).argmin() 
+                
+                
+                
+                # ensure wall→outer order ??? #
+                if y_BL[0] > y_BL[-1]:
+                    y_BL = y_BL[::-1]
     
-    # Loop through each case
-    for key in x_quad.keys():
-        
-        # Get wall geometry
-        x_w = x_wall[key]
-        y_w = y_wall[key]
-        
-        # Get results for this case
-        delta_vals = delta[key]
-        is_sep = separation_mask[key]
-        is_shock = shock_mask[key]
-        
-        # Compute y_edge = y_wall + delta at each station
-        # First, get wall y at each x-station
-        y_wall_at_stations = np.zeros(len(x_stations))
-        for i, x_loc in enumerate(x_stations):
-            wall_idx = np.argmin(np.abs(x_w - x_loc))
-            y_wall_at_stations[i] = y_w[wall_idx]
-        
-        y_edge = y_wall_at_stations + delta_vals
-        
-        # Create figure
-        fig, ax = plt.subplots(figsize=(14, 5))
-        
-        # Plot wall geometry
-        ax.plot(x_w, y_w, 'k-', linewidth=2, label='Wall')
-        
-        # Plot valid BL edge points (not separated, not shock)
-        valid = ~is_sep & ~is_shock & ~np.isnan(delta_vals)
-        ax.plot(x_stations[valid], y_edge[valid], 'go', markersize=5, 
-                label='BL Edge (valid)')
-        
-        # Plot separation regions
-        if np.any(is_sep):
-            ax.axvspan(x_stations[is_sep].min(), x_stations[is_sep].max(),
-                       alpha=0.2, color='red', label='Separated region')
-            # Also mark individual points
-            ax.plot(x_stations[is_sep], y_wall_at_stations[is_sep], 'rx', 
-                    markersize=8, label='Separated points')
-        
-        # Plot shock regions
-        if np.any(is_shock):
-            ax.plot(x_stations[is_shock], y_wall_at_stations[is_shock], 'b^',
-                    markersize=8, label='Shock detected')
-        
-        # Formatting
-        ax.set_xlabel('x [m]')
-        ax.set_ylabel('y [m]')
-        ax.set_title(f'Boundary Layer Edge Detection - {key}\n'
-                     f'(ω threshold = {vorticity_threshold}, '
-                     f'dρ/dy threshold = {density_gradient_threshold})')
-        ax.legend(loc='upper left')
-        ax.set_xlim([x_min - 0.005, x_max + 0.005])
-        ax.grid(True, alpha=0.3)
-        ax.set_aspect('equal')
-        
-        plt.tight_layout()
-        plt.show()
-        
-        # Print summary
-        print(f"\n{key}:")
-        print(f"  Valid points:     {np.sum(valid)} / {num_stations}")
-        print(f"  Separated points: {np.sum(is_sep)}")
-        print(f"  Shock points:     {np.sum(is_shock)}")
+                y_wall0   = y_BL[0]
+                y_corr    = y_BL - y_wall0
+                
+                # FINDING Y INDEX AT WHICH BL EDGE IS FOUND # 
 
+                # Saving the boundary layer edge values in a dictionary #
+                delta_mm  = float(y_corr[y_index]) * 1000
+                y_bl = y_corr[y_index]
+                delta_n_dict[key][i] = delta_mm
+                print(f"BL thickness = {delta_mm:.3f} mm")
+    
 
 #%%
 #%%
@@ -3337,9 +3218,9 @@ def generate_axial_force_plot_dual_mach(df, output_path='axial_force_dual_plot_m
         ax1.plot(h_l_values, y_vals / pstatic, 'o-', color=color, linewidth=2, 
                  markersize=8, label=f'M = {mach}')
         # Optimal reference line
-        #ax1.plot(0.05, tau_x_by_mach[mach], color=color, marker = 's', markersize = 10)
+        ax1.plot(0.05, tau_x_by_mach[mach] / pstatic, color=color, marker = 's', markersize = 10)
         #ax1.axhline(y=tau_x_by_mach[mach], color=color, linestyle='--', 
-                    #alpha=0.4, linewidth=1.5) # DO THE SAME THING HERE
+         #           alpha=0.4, linewidth=1.5) # DO THE SAME THING HERE
     
     ax1.set_title(r"Axial Force / $P_{static}$ vs h/l", fontsize=28, fontweight='bold')
     ax1.set_xlabel("h/l", fontsize = 21)
@@ -3409,7 +3290,7 @@ def generate_axial_force_plot_dual_mach(df, output_path='axial_force_dual_plot_m
 # Single plot: Force vs h/l
 generate_axial_force_plot_mach(
     df_comparison, 
-    output_path=r'C:\Users\hadie\Documents\5_Code\1_Research\Supersonic-Bladeless-Turbine\SBTTD\reports\figures\Mach Study\axialForce_vs_hl_plot.png',
+    output_path=r'C:\Users\hhsabbah\Documents\01_Bladeless_Proj\35_Git\Supersonic-Bladeless-Turbine\SBTTD\reports\figures\Mach Study\axialForce_vs_hl_plot.png',
     title="Axial Force vs h/l\n(Varying Mach Number)",
     ylabel="Axial Force [N/m]",
     show_optimal=True
@@ -3418,7 +3299,7 @@ generate_axial_force_plot_mach(
 # Normalized version
 generate_axial_force_plot_mach(
     df_comparisonNorm, 
-    output_path=r'C:\Users\hadie\Documents\5_Code\1_Research\Supersonic-Bladeless-Turbine\SBTTD\reports\figures\Mach Study\axialForceNorm_vs_hl_plot.png',
+    output_path=r'C:\Users\hhsabbah\Documents\01_Bladeless_Proj\35_Git\Supersonic-Bladeless-Turbine\SBTTD\reports\figures\Mach Study\axialForceNorm_vs_hl_plot.png',
     title="Axial Force per Unit Length vs h/l\n(Varying Mach Number)",
     ylabel="Axial Force per Unit Length [N/m]",
     show_optimal=True
@@ -3427,7 +3308,7 @@ generate_axial_force_plot_mach(
 # Dual panel plot showing both perspectives
 generate_axial_force_plot_dual_mach(
     df_comparison,
-    output_path=r'C:\Users\hadie\Documents\5_Code\1_Research\Supersonic-Bladeless-Turbine\SBTTD\reports\figures\Mach Study\axialForce_dual_plot.png',
+    output_path=r'C:\Users\hhsabbah\Documents\01_Bladeless_Proj\35_Git\Supersonic-Bladeless-Turbine\SBTTD\reports\figures\Mach Study\axialForce_dual_plot.png',
     title="Axial Force Trends",
     ylabel=r"Axial Force / $P_{static}$"
 )
