@@ -289,11 +289,25 @@ for idx, key in enumerate(ds_by_case.keys()):
             
             # Shear stress at the wall #
             tau_x_line = line.values("Tau_x").as_numpy_array()[0]
+            tau_y_line = line.values("Tau_y").as_numpy_array()[0]
+            
+           # Wall tangent at this point from the wall curve gradients #
+            dx = dx_ds[ok][::stride][i]
+            dy = dy_ds[ok][::stride][i]
+            ds = np.sqrt(dx**2 + dy**2)
+            tx = dx / ds
+            ty = dy / ds
+            
+            # Shear stress projected onto wall tangent # 
+            tau_wall_line = tau_x_line * tx + tau_y_line * ty
+            
+            
+            
             print(f"shear stress = {tau_x_line} Pa")
             
 
             
-            if tau_x_line <= 0: 
+            if tau_wall_line <= 0: 
                 print("------------Point skiped due to separation!\n")
                 continue
                
@@ -336,16 +350,252 @@ for idx, key in enumerate(ds_by_case.keys()):
                 y_wall0   = y_BL[0]
                 y_corr    = y_BL - y_wall0
                 
-                # FINDING Y INDEX AT WHICH BL EDGE IS FOUND # 
 
                 # Saving the boundary layer edge values in a dictionary #
                 delta_mm  = float(y_corr[y_index]) * 1000
                 y_bl = y_corr[y_index]
                 delta_n_dict[key][i] = delta_mm
                 print(f"BL thickness = {delta_mm:.3f} mm")
+                
+                
+                # Plotting the result in tecplot itself # 
+                
+                # --- Mark BL edge in Tecplot ---
+                # Coordinates of the BL edge point
+                x_edge = float(x_BL[y_index])
+                y_edge = float(y_BL[y_index])
+                
+                # Create a single-point ordered zone #
+                ds = fr.dataset
+                zone = ds.add_ordered_zone(f"BL_edge_{key}_{i}", (1,))
+                zone.values("X")[0] = x_edge
+                zone.values("Y")[0] = y_edge
+                
+                # Style it as a circle symbol #
+                plot = fr.plot()
+                fmap = plot.fieldmap(zone)
+                fmap.scatter.show = True
+                fmap.scatter.symbol().shape = tp.constant.GeomShape.Circle
+                fmap.scatter.size = 1.5          # adjust size as needed
+                fmap.scatter.color = tp.constant.Color.Red
+                fmap.scatter.fill_color = tp.constant.Color.Red
+                fmap.mesh.show = False
+                fmap.contour.show = False
+                fmap.shade.show = False
+
+#%% Claude update optimized BL code:
     
+    
+import matplotlib as pyplot
+from tecplot.constant import PlotType
+
+"""
+#------------------------------------------------------------------------------------------------------------------------------------#
+                                                 Boundary layer thickness detection
+#------------------------------------------------------------------------------------------------------------------------------------#
+"""
+
+# Connecting to Tecplot #
+tp.session.connect()
+
+# Pre-Allocating Variables for boundary layer edge #
+delta_n_dict = {}
+tau_w_dict = {}
+
+# Defining variables #
+Nx = 500
+Ny = 300
+bl_h = 3 / 1000
+stride = 1
+num_points = Ny
+
+# Defining all the directories #
+base_dir = Path(r"C:\Users\hhsabbah\Documents\01_Bladeless_Proj\35_Git\Supersonic-Bladeless-Turbine\SBTTD\data\raw\Mach Study 2")
+rootDir = base_dir
+subDirs1 = [p for p in rootDir.iterdir() if p.is_dir()]
+
+fileName = "mcfd_tec.bin"
+subDirs2 = [p for d in subDirs1 for p in d.iterdir() if p.is_dir()]
+file_paths = [p / fileName for p in subDirs2]
+
+
+for idx, key in enumerate(ds_by_case.keys()):
+
+    # Import case into tecplot #
+    tp.new_layout()
+    tp.data.load_tecplot(file_paths[idx].as_posix())
+    fr = tp.active_frame()
+    fr.plot_type = PlotType.Cartesian2D
+
+    # Finding the gradient for x and y #
+    slice_cut_int = 30
+    dx_ds = np.gradient(x[key][slice_cut_int:-1])
+    dy_ds = np.gradient(y[key][slice_cut_int:-1])
+
+    # Finding the Normal values for line extraction #
+    nx, ny = -dy_ds, dx_ds
+    norm = np.hypot(nx, ny)
+    norm = np.where(norm < 1e-12, np.nan, norm)
+    ux, uy = nx / norm, ny / norm
+
+    # Raking End points #
+    x_final = x[key][slice_cut_int:-1] + bl_h * ux
+    y_final = y[key][slice_cut_int:-1] + bl_h * uy
+    ok = np.isfinite(x_final) & np.isfinite(y_final)
+
+    # Apply Stride #
+    x_start = x[key][slice_cut_int:-1][ok][::stride]
+    y_start = y[key][slice_cut_int:-1][ok][::stride]
+    x_end = x_final[ok][::stride]
+    y_end = y_final[ok][::stride]
+
+    # Precompute tangent vectors for all stride points (outside inner loop) #
+    dx_arr = dx_ds[ok][::stride]
+    dy_arr = dy_ds[ok][::stride]
+    ds_arr = np.sqrt(dx_arr**2 + dy_arr**2)
+    tx_arr = dx_arr / ds_arr
+    ty_arr = dy_arr / ds_arr
+
+    # Build arrays #
+    n = min(len(x_start), len(y_start), len(x_end), len(y_end))
+    x_pairs = np.column_stack((x_start[:n], x_end[:n]))
+    y_pairs = np.column_stack((y_start[:n], y_end[:n]))
+
+    # Pre-allocate output arrays
+    N = x_pairs.shape[0]
+    delta_n_dict[key] = np.full(N, np.nan, dtype=float)
+    tau_w_dict[key] = np.full(N, np.nan, dtype=float)
+
+    # Pre-allocate lists for BL edge points (batch zone creation) #
+    edge_x_list = []
+    edge_y_list = []
+
+    print(50 * "==")
+    print(f"Processing {file_paths[idx]}")
+    print(50 * "==")
+    print("\n")
+
+    for i in range(N):
+        p0 = (float(x_pairs[i, 0]), float(y_pairs[i, 0]), 0.0)
+        p1 = (float(x_pairs[i, 1]), float(y_pairs[i, 1]), 0.0)
+
+        # Single line extraction (no duplicate call) #
+        line = tp.data.extract.extract_line([p0, p1], num_points=num_points)
+
+        # Shear stress at the wall #
+        tau_x_line = line.values("Tau_x").as_numpy_array()[0]
+        tau_y_line = line.values("Tau_y").as_numpy_array()[0]
+
+        # Shear stress projected onto wall tangent #
+        tau_wall_line = tau_x_line * tx_arr[i] + tau_y_line * ty_arr[i]
+        
+        print(f"Iteration {i}:")
+        print(f"shear stress = {tau_wall_line:.4f} Pa")
+
+        if tau_wall_line <= 0:
+            print("------------Point skipped due to separation!\n")
+            continue
+
+        # Store wall shear stress #
+        tau_w_dict[key][i] = tau_wall_line
+
+        # Grab BL profile variables from the already-extracted line #
+        x_BL       = line.values("X").as_numpy_array()
+        y_BL       = line.values("Y").as_numpy_array()
+        omega_z_Bl = line.values("Vort_z").as_numpy_array()
+
+        # Finding the location at which the vorticity is almost equal to zero #
+        
+        # Old threshold # 
+        #y_index = np.abs(omega_z_Bl).argmin()
+        
+        # Vorticity gradient along the rake (d_omega/dn) #
+        d_omega = np.gradient(omega_z_Bl)
+        
+        # Normalize by peak gradient to make threshold geometry-independent #
+        d_omega_norm = np.abs(d_omega) / (np.abs(d_omega).max() + 1e-30)
+        
+        # BL edge: first point (beyond ~10% of rake) where normalized gradient < threshold #
+        threshold = 0.02
+        start_idx = max(1, num_points // 10)  # skip near-wall region
+        candidates = np.where(d_omega_norm[start_idx:] < threshold)[0]
+        
+        if len(candidates) > 0:
+            y_index = candidates[0] + start_idx
+        else:
+            y_index = num_points - 1  # fallback: use rake tip
+
+
+
+        # Ensure wall→outer order #
+        if y_BL[0] > y_BL[-1]:
+            y_BL = y_BL[::-1]
+
+        y_wall0 = y_BL[0]
+        y_corr = y_BL - y_wall0
+
+        # Saving the boundary layer edge values #
+        delta_mm = float(y_corr[y_index]) * 1000
+        delta_n_dict[key][i] = delta_mm
+        print(f"BL thickness = {delta_mm:.3f} mm")
+        
+        print(20*"==")
+
+        # Collect BL edge coordinates for batch plotting #
+        edge_x_list.append(float(x_BL[y_index]))
+        edge_y_list.append(float(y_BL[y_index]))
+
+
+#%% For plotting stuff. Add if needed.... removing to hasten post-processing process. 
+    # ---- Batch-create a single zone for all BL edge points ---- #
+        # Draw a circle geometry at the BL edge point #
+        x_edge = float(x_BL[y_index])
+        y_edge = float(y_BL[y_index])
+        circle = fr.add_circle((x_edge, y_edge), 0.000003, tp.constant.CoordSys.Grid)
+        circle.color = tp.constant.Color.Red
+        circle.line_thickness = 0.3
+        circle.fill_color = tp.constant.Color.Red
+        
+        # Plotting results # 
+        # Height along rake from wall #
+        h_rake = np.sqrt((x_BL - x_BL[0])**2 + (y_BL - y_BL[0])**2) * 1000
+
+        # Diagnostic plot #
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(10, 5))
+
+        ax1.plot(h_rake,omega_z_Bl, 'k-', lw=1.2)
+        ax1.axhline(h_rake[y_index], color='r', ls='--', lw=0.8)
+        ax1.plot(h_rake[y_index],omega_z_Bl[y_index], 'ro', ms=8, label=f'BL edge = {h_rake[y_index]:.3f} mm')
+        ax1.set_ylabel('Vorticity [1/s]')
+        ax1.set_xlabel('Height from wall [mm]')
+        ax1.set_title('Vorticity profile')
+        ax1.legend()
+
+        ax2.plot(h_rake,d_omega_norm, 'k-', lw=1.2)
+        ax2.axhline(threshold, color='b', ls='--', lw=0.8, label=f'Threshold = {threshold}')
+        ax2.axvline(h_rake[y_index], color='r', ls='--', lw=0.8)
+        ax2.plot(h_rake[y_index],d_omega_norm[y_index], 'ro', ms=8, label=f'BL edge = {h_rake[y_index]:.3f} mm')
+        ax2.set_xlabel('|d(ω)/dn| / max (normalized)')
+        ax2.set_ylabel('Height from wall [mm]')
+        ax2.set_title('Vorticity gradient criterion')
+        ax2.legend()
+
+        fig.suptitle(f'{key} — Rake {i}')
+        fig.tight_layout()
+        plt.show()
+
+        # Ensure wall→outer order #
+        if y_BL[0] > y_BL[-1]:
+            y_BL = y_BL[::-1]
 
 #%%
+temporary_key = 'h_l_0.03_Mach_3.5'
+plt.plot(x[temporary_key], delta_n_dict[temporary_key])
+plt.show()
+
+
+
+
 #%%
 
 """
