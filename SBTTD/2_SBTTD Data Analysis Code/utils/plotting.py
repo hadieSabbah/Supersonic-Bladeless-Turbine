@@ -29,7 +29,7 @@ def plotter(x, y, x_string, y_string, unit_x, unit_y, save = False, return_axes 
     mpl.rcParams['grid.linewidth'] = 0.5
 
     # DPI for screen and saving
-    mpl.rcParams['figure.dpi'] = 150  # Screen display
+    mpl.rcParams['figure.dpi'] = 600  # Screen display
     mpl.rcParams['savefig.dpi'] = 600  # Save at high resolution
     
     # Defining labels #
@@ -201,7 +201,7 @@ def subplotter(nrows, ncols, x_data, y_data, x_strings, y_strings,
     mpl.rcParams['axes.linewidth'] = 1
     mpl.rcParams['lines.linewidth'] = 1.5
     mpl.rcParams['grid.linewidth'] = 0.5
-    mpl.rcParams['figure.dpi'] = 150
+    mpl.rcParams['figure.dpi'] = 600
     mpl.rcParams['savefig.dpi'] = 600
     
     # Auto-calculate figsize if not provided
@@ -306,7 +306,7 @@ def plot_scaled_axialForce_vs_hl(results_dict, h_l_values, save=False):
     mpl.rcParams['axes.linewidth'] = 1
     mpl.rcParams['lines.linewidth'] = 1.5
     mpl.rcParams['grid.linewidth'] = 0.5
-    mpl.rcParams['figure.dpi'] = 150
+    mpl.rcParams['figure.dpi'] = 600
     mpl.rcParams['savefig.dpi'] = 600
     
     # Extract unique Mach numbers from keys
@@ -434,7 +434,7 @@ def plotter_multiPerCase(x_dict, y_dict, x_string, y_string, unit_x, unit_y,
     mpl.rcParams['axes.linewidth'] = 1
     mpl.rcParams['lines.linewidth'] = 1.5
     mpl.rcParams['grid.linewidth'] = 0.5
-    mpl.rcParams['figure.dpi'] = 150
+    mpl.rcParams['figure.dpi'] = 600
     mpl.rcParams['savefig.dpi'] = 600
     
     # Filter cases based on the filter parameter
@@ -585,7 +585,7 @@ def plotter_multi_all(x_dict, y_dict, x_string, y_string, unit_x, unit_y,
     mpl.rcParams['axes.linewidth'] = 1
     mpl.rcParams['lines.linewidth'] = 1.5
     mpl.rcParams['grid.linewidth'] = 0.5
-    mpl.rcParams['figure.dpi'] = 150
+    mpl.rcParams['figure.dpi'] = 600
     mpl.rcParams['savefig.dpi'] = 600
     
 

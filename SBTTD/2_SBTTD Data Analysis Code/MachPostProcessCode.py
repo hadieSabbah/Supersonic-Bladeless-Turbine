@@ -188,200 +188,7 @@ print(missing)  # ['M2.0_P0_0.5', 'M3.0_P0_1.2', ...]
     
     
     
-#%% Boundary layer edge detection code  ####
 
-import matplotlib as pyplot
-from tecplot.constant import PlotType
-"""
-#------------------------------------------------------------------------------------------------------------------------------------#
-                                                 Boundary layer thickness detection
-#------------------------------------------------------------------------------------------------------------------------------------#
-
-"""
-
-
-# Connecting to Tecplot # 
-tp.session.connect()
-
-
-# Pre-Allocating Variables for boundary layer edge # 
-delta_n_dict = {}
-tau_w_dict = {}
-
-# Defining variables # 
-Nx = 500 # Number of Nx discrete points
-Ny = 300 # Number of discrete points in the y direction in the line. 
-bl_h = 3/1000 # Boundary layer height you're suspecting. Units in [m]
-stride = 1
-num_points = Ny
-
-# Defining all the directories # 
-base_dir = Path(r"C:\Users\hhsabbah\Documents\01_Bladeless_Proj\35_Git\Supersonic-Bladeless-Turbine\SBTTD\data\raw\Mach Study 2")
-rootDir = base_dir # this is the root directory to the parametric study solution files
-subDirs1 = [p for p in rootDir.iterdir() if p.is_dir()]
-
-fileName = "mcfd_tec.bin"
-subDirs2 = [p for d in subDirs1 for p in d.iterdir() if p.is_dir()]  # flattened
-file_paths = [p / fileName for p in subDirs2]
-
-
-
-
-for idx, key in enumerate(ds_by_case.keys()):
-    
-    
-    # Import case into tecplot # 
-    tp.new_layout()
-    tp.data.load_tecplot(file_paths[idx].as_posix())
-    fr = tp.active_frame()
-    fr.plot_type = PlotType.Cartesian2D
-    
-    
-    # Finding the gradient for x and y #
-    dx_ds = np.gradient(x[key])
-    dy_ds = np.gradient(y[key])
-    
-    # Finding the Normal values for line extraction # 
-    nx,ny = -dy_ds,dx_ds
-    norm = np.hypot(nx,ny)
-    
-    # Avoidinig Division by zero #
-    norm = np.where(norm < 1e-12,np.nan, norm)
-    ux,uy = nx/norm , ny/norm 
-    
-    # Raking End points # 
-    x_final = x[key] + bl_h * ux
-    y_final = y[key] + bl_h * uy
-    ok = np.isfinite(x_final) & np.isfinite(y_final)
-    
-    # Apply Stride to reduce th enumber of profiles #
-    x_start = x[key][ok][::stride]
-    y_start = y[key][ok][::stride]
-    
-    x_end = x_final[ok][::stride]
-    y_end = y_final[ok][::stride]
-    
-    # Build arrays # 
-    n = min(len(x_start), len(y_start), len(x_end), len(y_end))
-    x_pairs = np.column_stack((x_start[:n], x_end[:n]))
-    y_pairs = np.column_stack((y_start[:n], y_end[:n]))
-    
-    # Pre-allocate output arrays
-    N = x_pairs.shape[0]
-    delta_n_dict[key] = np.full(N, np.nan, dtype=float) #units should be in meters 
-    tau_w_dict[key] = np.full(N, np.nan, dtype=float)
-    
-    
-    # Printing to track which case is being processed # 
-    print(70*"==")
-    print(f"Processing {file_paths[idx]}")
-    print(70*"==")
-    print("\n")
-    
-    
-    for i in range(N):
-            # Shear Stress Computation for if else statement # 
-            p0 = (float(x_pairs[i, 0]), float(y_pairs[i, 0]), 0.0)
-            p1 = (float(x_pairs[i, 1]), float(y_pairs[i, 1]), 0.0)
-            
-            # Using line to compute the results along the line # 
-            line = tp.data.extract.extract_line([p0, p1], num_points=num_points)
-            
-            # Shear stress at the wall #
-            tau_x_line = line.values("Tau_x").as_numpy_array()[0]
-            tau_y_line = line.values("Tau_y").as_numpy_array()[0]
-            
-           # Wall tangent at this point from the wall curve gradients #
-            dx = dx_ds[ok][::stride][i]
-            dy = dy_ds[ok][::stride][i]
-            ds = np.sqrt(dx**2 + dy**2)
-            tx = dx / ds
-            ty = dy / ds
-            
-            # Shear stress projected onto wall tangent # 
-            tau_wall_line = tau_x_line * tx + tau_y_line * ty
-            
-            
-            
-            print(f"shear stress = {tau_x_line} Pa")
-            
-
-            
-            if tau_wall_line <= 0: 
-                print("------------Point skiped due to separation!\n")
-                continue
-               
-            else: 
-                # Shear Stress Computation for if else statement # 
-                p0 = (float(x_pairs[i, 0]), float(y_pairs[i, 0]), 0.0)
-                p1 = (float(x_pairs[i, 1]), float(y_pairs[i, 1]), 0.0)
-                
-                # Using line to compute the results along the line # 
-                line = tp.data.extract.extract_line([p0, p1], num_points=num_points)
-                
-                # Shear stress at the wall #
-                tau_x_line = line.values("Tau_x").as_numpy_array()[0]
-
-                
-                
-                # Grab only needed vars
-                x_BL = line.values("X").as_numpy_array()
-                y_BL = line.values("Y").as_numpy_array()
-                U_Bl    = line.values("U").as_numpy_array()
-                V_Bl    = line.values("V").as_numpy_array()
-                P_Bl    = line.values("P").as_numpy_array()
-                Rho_Bl  = line.values("R").as_numpy_array()
-                tauy_Bl = line.values("Tau_y").as_numpy_array()
-                omega_z_Bl = line.values("Vort_z").as_numpy_array()
-    
-                tau_w = float(tau_x_line)
-                tau_w_dict[key][i] = tau_x_line
-
-    
-                # Finding the location at which the vorticity is almost equal to zero #
-                y_index = np.abs(omega_z_Bl - 0).argmin() 
-                
-                
-                
-                # ensure wall→outer order ??? #
-                if y_BL[0] > y_BL[-1]:
-                    y_BL = y_BL[::-1]
-    
-                y_wall0   = y_BL[0]
-                y_corr    = y_BL - y_wall0
-                
-
-                # Saving the boundary layer edge values in a dictionary #
-                delta_mm  = float(y_corr[y_index]) * 1000
-                y_bl = y_corr[y_index]
-                delta_n_dict[key][i] = delta_mm
-                print(f"BL thickness = {delta_mm:.3f} mm")
-                
-                
-                # Plotting the result in tecplot itself # 
-                
-                # --- Mark BL edge in Tecplot ---
-                # Coordinates of the BL edge point
-                x_edge = float(x_BL[y_index])
-                y_edge = float(y_BL[y_index])
-                
-                # Create a single-point ordered zone #
-                ds = fr.dataset
-                zone = ds.add_ordered_zone(f"BL_edge_{key}_{i}", (1,))
-                zone.values("X")[0] = x_edge
-                zone.values("Y")[0] = y_edge
-                
-                # Style it as a circle symbol #
-                plot = fr.plot()
-                fmap = plot.fieldmap(zone)
-                fmap.scatter.show = True
-                fmap.scatter.symbol().shape = tp.constant.GeomShape.Circle
-                fmap.scatter.size = 1.5          # adjust size as needed
-                fmap.scatter.color = tp.constant.Color.Red
-                fmap.scatter.fill_color = tp.constant.Color.Red
-                fmap.mesh.show = False
-                fmap.contour.show = False
-                fmap.shade.show = False
 
 #%% Claude update optimized BL code:
     
@@ -404,7 +211,7 @@ tau_w_dict = {}
 
 # Defining variables #
 Nx = 500
-Ny = 300
+Ny = 1000
 bl_h = 3 / 1000
 stride = 1
 num_points = Ny
@@ -428,7 +235,7 @@ for idx, key in enumerate(ds_by_case.keys()):
     fr.plot_type = PlotType.Cartesian2D
 
     # Finding the gradient for x and y #
-    slice_cut_int = 30
+    slice_cut_int = 0
     dx_ds = np.gradient(x[key][slice_cut_int:-1])
     dy_ds = np.gradient(y[key][slice_cut_int:-1])
 
@@ -544,7 +351,39 @@ for idx, key in enumerate(ds_by_case.keys()):
         # Collect BL edge coordinates for batch plotting #
         edge_x_list.append(float(x_BL[y_index]))
         edge_y_list.append(float(y_BL[y_index]))
+        
+        #%%
+        
+        
 
+#### DARWING THE BOUNDARY LAYER VALUES #####
+# Bl cod #
+import tecplot as tp
+from tecplot.constant import *
+
+plot = tp.active_frame().plot()
+plot.show_scatter = True
+
+# Create a zone for your points
+points_zone = test.add_ordered_zone('Points', len(x_points))
+points_zone.values('X')[:] = x_points
+points_zone.values('Y')[:] = y_points
+points_zone.values('Z')[:] = 0.0
+
+# Configure scatter appearance
+fieldmap = plot.fieldmap(points_zone)
+fieldmap.scatter.show = True
+fieldmap.scatter.symbol_type = GeomShape.Circle   # Circle, Cross, Square, Diamond, etc.
+fieldmap.scatter.color = Color.Red
+fieldmap.scatter.size = 2.0
+
+# Turn off mesh/contour for the points zone
+fieldmap.mesh.show = False
+fieldmap.contour.show = False
+
+# Redraw to see changes
+tp.session.redraw()
+        
 
 
 
