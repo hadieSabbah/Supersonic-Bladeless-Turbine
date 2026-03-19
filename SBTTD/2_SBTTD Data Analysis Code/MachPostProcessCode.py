@@ -26,7 +26,7 @@ import utils.plotting
 
 from utils.parameterComputation import variableImporterMasked, ReCompute, yplusThreshold
 from utils.dataload_util import assign_dir, bigImport, runSaver, runLoader, file_pathFinder, load_minfo_step_force
-from utils.plotting import plotter, plotter_multi_all, plotter_multiPerCase, subplotter, plot_scaled_axialForce_vs_hl
+from utils.plotting import plotter, plotter_multi_all, plotter_multiPerCase, subplotter, plot_scaled_axialForce_vs_hl,plot_BL_thickness
 from utils.models import analyze_geometries, get_first_shock_pressures, offsetGeomPoints, smallPertSolver, find_sepLength, max_min_finder,mach_vs_sepLength, smallPertSolver_with_SE, smallPertSolver_combined
 
 
@@ -546,55 +546,53 @@ for idx, key in enumerate(ds_by_case.keys()):
         edge_y_list.append(float(y_BL[y_index]))
 
 
-#%% For plotting stuff. Add if needed.... removing to hasten post-processing process. 
-    # ---- Batch-create a single zone for all BL edge points ---- #
-        # Draw a circle geometry at the BL edge point #
-        x_edge = float(x_BL[y_index])
-        y_edge = float(y_BL[y_index])
-        circle = fr.add_circle((x_edge, y_edge), 0.000003, tp.constant.CoordSys.Grid)
-        circle.color = tp.constant.Color.Red
-        circle.line_thickness = 0.3
-        circle.fill_color = tp.constant.Color.Red
-        
-        # Plotting results # 
-        # Height along rake from wall #
-        h_rake = np.sqrt((x_BL - x_BL[0])**2 + (y_BL - y_BL[0])**2) * 1000
-
-        # Diagnostic plot #
-        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(10, 5))
-
-        ax1.plot(h_rake,omega_z_Bl, 'k-', lw=1.2)
-        ax1.axhline(h_rake[y_index], color='r', ls='--', lw=0.8)
-        ax1.plot(h_rake[y_index],omega_z_Bl[y_index], 'ro', ms=8, label=f'BL edge = {h_rake[y_index]:.3f} mm')
-        ax1.set_ylabel('Vorticity [1/s]')
-        ax1.set_xlabel('Height from wall [mm]')
-        ax1.set_title('Vorticity profile')
-        ax1.legend()
-
-        ax2.plot(h_rake,d_omega_norm, 'k-', lw=1.2)
-        ax2.axhline(threshold, color='b', ls='--', lw=0.8, label=f'Threshold = {threshold}')
-        ax2.axvline(h_rake[y_index], color='r', ls='--', lw=0.8)
-        ax2.plot(h_rake[y_index],d_omega_norm[y_index], 'ro', ms=8, label=f'BL edge = {h_rake[y_index]:.3f} mm')
-        ax2.set_xlabel('|d(ω)/dn| / max (normalized)')
-        ax2.set_ylabel('Height from wall [mm]')
-        ax2.set_title('Vorticity gradient criterion')
-        ax2.legend()
-
-        fig.suptitle(f'{key} — Rake {i}')
-        fig.tight_layout()
-        plt.show()
-
-        # Ensure wall→outer order #
-        if y_BL[0] > y_BL[-1]:
-            y_BL = y_BL[::-1]
-
-#%%
-temporary_key = 'h_l_0.03_Mach_3.5'
-plt.plot(x[temporary_key], delta_n_dict[temporary_key])
-plt.show()
 
 
 
+
+#%% Plotting results # 
+x_start_dict = {key: x[key][slice_cut_int:-1] for key in x}
+plot_BL_thickness(delta_n_dict, x_start_dict, save=True)
+
+
+#%% Saving the boundary layer height results ##
+
+
+from datetime import date
+from pathlib import Path
+
+# --- Export BL thickness results ---
+base_dir = Path(r"C:\Users\hhsabbah\Documents\01_Bladeless_Proj\35_Git\Supersonic-Bladeless-Turbine\SBTTD\data\processed\Boundary Layer Data\Mach Study")
+today = date.today().strftime("%Y-%m-%d")
+output_dir = base_dir / f"BL_results_{today}"
+output_dir.mkdir(exist_ok=True)
+
+np.savez(
+    output_dir / "delta_n_dict.npz",
+    **delta_n_dict
+)
+
+print(f"Saved delta_n_dict to {output_dir / 'delta_n_dict.npz'}")
+
+#%% Reload results # 
+loaded = np.load(output_dir / "delta_n_dict.npz", allow_pickle=False)
+delta_n_dict = {key: loaded[key] for key in loaded.files}
+
+
+#%% Automatic reloading ###
+
+from datetime import date
+from pathlib import Path
+
+# --- Reload latest BL results ---
+all_bl_dirs = sorted(base_dir.glob("BL_results_*"))  # finds all dated folders
+
+latest_dir = max(all_bl_dirs, key=lambda p: date.fromisoformat(p.name.split("_")[-1]))
+
+loaded = np.load(latest_dir / "delta_n_dict.npz", allow_pickle=False)
+delta_n_dict = {key: loaded[key] for key in loaded.files}
+
+print(f"Loaded delta_n_dict from {latest_dir}")
 
 #%%
 

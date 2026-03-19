@@ -66,7 +66,88 @@ def plotter(x, y, x_string, y_string, unit_x, unit_y, save = False, return_axes 
     if return_axes:
         return fig, ax
         
+def plot_BL_thickness(delta_n_dict, x_start_dict, save=False,
+                      save_dir=Path(r"C:\Users\hhsabbah\Documents\01_Bladeless_Proj\35_Git\Supersonic-Bladeless-Turbine\SBTTD\reports\figures\Mach Study")):
+    """
+    One figure per h/l value, one curve per Mach number.
 
+    Parameters
+    ----------
+    delta_n_dict  : dict  {case_key: np.ndarray}  BL thickness [mm]
+    x_start_dict  : dict  {case_key: np.ndarray}  rake x-positions [m]
+    save          : bool
+    save_dir      : Path
+    """
+
+    mpl.rcParams['font.family']     = 'serif'
+    mpl.rcParams['font.serif']      = ['Times New Roman']
+    mpl.rcParams['font.size']       = 18
+    mpl.rcParams['axes.labelsize']  = 10
+    mpl.rcParams['axes.titlesize']  = 11
+    mpl.rcParams['xtick.labelsize'] = 8
+    mpl.rcParams['ytick.labelsize'] = 8
+    mpl.rcParams['figure.dpi']      = 600
+    mpl.rcParams['savefig.dpi']     = 600
+    mpl.rcParams['axes.linewidth']  = 1
+    mpl.rcParams['lines.linewidth'] = 1.5
+    mpl.rcParams['grid.linewidth']  = 0.5
+
+    # --- Extract unique h/l values ----
+    hl_set = set()
+    for key in delta_n_dict:
+        m = re.search(r'h_l_([\d.x]+)', key)
+        if m:
+            hl_set.add(m.group(1))
+    
+    hl_values = sorted(
+        hl_set,
+        key=lambda v: float('inf') if v == 'x' else float(v)
+    )
+
+    # --- One figure per h/l ---
+    for hl in hl_values:
+
+        # Collect all keys that match this h/l, sorted by Mach
+        keys_for_hl = sorted(
+            [k for k in delta_n_dict if re.search(rf'h_l_{re.escape(hl)}_', k)],
+            key=lambda k: float(re.search(r'Mach_([\d.]+)', k).group(1))
+        )
+
+        n_curves = len(keys_for_hl)
+        cmap     = cm.get_cmap('cividis', n_curves)
+
+        fig, ax = plt.subplots(figsize=(3.5, 2.5))
+
+        for i, key in enumerate(keys_for_hl):
+            x_arr     = x_start_dict[key]
+            delta_arr = delta_n_dict[key]
+
+            # Drop NaN (separation-skipped points)
+            # With this:
+            x_plot     = x_arr          # keep full length
+            delta_plot = delta_arr      # NaNs stay in — matplotlib breaks line there
+
+            mach_match = re.search(r'Mach_([\d.]+)', key)
+            label      = f"M = {mach_match.group(1)}" if mach_match else key
+
+            ax.plot(x_plot, delta_plot, color=cmap(i), label=label)
+
+        ax.set_title(f"BL Thickness — h/l = {hl}")
+        ax.set_xlabel(r"X [m]")
+        ax.set_ylabel(r"BL $\delta$ [mm]")
+        ax.legend(frameon=False, fontsize=6)
+        ax.grid(True, alpha=0.3)
+        plt.tight_layout()
+        plt.show()
+
+        if save:
+            save_dir = Path(save_dir)
+            save_dir.mkdir(parents=True, exist_ok=True)
+            fig_name = f"BL_thickness_hl_{hl}"
+            fig.savefig(save_dir / f"{fig_name}.png", dpi=600, bbox_inches='tight')
+            fig.savefig(save_dir / f"{fig_name}.pdf",            bbox_inches='tight')
+
+        plt.close(fig)
 
 def subplotter(nrows, ncols, x_data, y_data, x_strings, y_strings, 
                unit_x, unit_y, subplot_titles=None, figsize=None, 
