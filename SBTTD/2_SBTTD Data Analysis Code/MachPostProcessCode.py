@@ -26,7 +26,7 @@ import utils.plotting
 
 from utils.parameterComputation import variableImporterMasked, ReCompute, yplusThreshold
 from utils.dataload_util import assign_dir, bigImport, runSaver, runLoader, file_pathFinder, load_minfo_step_force
-from utils.plotting import plotter, plotter_multi_all, plotter_multiPerCase, subplotter, plot_scaled_axialForce_vs_hl,plot_BL_thickness
+from utils.plotting import plotter, plotter_multi_all, plotter_multiPerCase, subplotter, plot_scaled_axialForce_vs_hl,plot_BL_thickness,plot_BL_location_tecplot
 from utils.models import analyze_geometries, get_first_shock_pressures, offsetGeomPoints, smallPertSolver, find_sepLength, max_min_finder,mach_vs_sepLength, smallPertSolver_with_SE, smallPertSolver_combined
 
 
@@ -397,6 +397,58 @@ x_start_dict = {key: x[key][slice_cut_int:-1] for key in x}
 plot_BL_thickness(delta_n_dict, x_start_dict, save=True)
 
 
+
+#%% Subplotting the boundary layer results ###
+
+plot_BL_thickness_subplots(delta_n_dict, x_start_dict, save=False)
+
+
+#%% Plotting the results on tecplot 
+from tecplot.constant import PlotType, GeomShape, Color
+
+
+
+
+
+
+
+edge_x_dict = {}
+edge_y_dict = {}
+
+bl_h          = 3 / 1000
+slice_cut_int = 0
+stride        = 1
+
+for key in delta_n_dict:
+    dx_ds = np.gradient(x[key][slice_cut_int:-1])
+    dy_ds = np.gradient(y[key][slice_cut_int:-1])
+
+    nx, ny = -dy_ds, dx_ds
+    norm   = np.hypot(nx, ny)
+    norm   = np.where(norm < 1e-12, np.nan, norm)
+    ux, uy = nx / norm, ny / norm
+
+    x_final = x[key][slice_cut_int:-1] + bl_h * ux
+    y_final = y[key][slice_cut_int:-1] + bl_h * uy
+    ok      = np.isfinite(x_final) & np.isfinite(y_final)
+
+    x_s = x[key][slice_cut_int:-1][ok][::stride]
+    y_s = y[key][slice_cut_int:-1][ok][::stride]
+
+    delta_arr = delta_n_dict[key]
+    valid     = np.isfinite(delta_arr)
+    delta_m   = delta_arr[valid] / 1000.0
+
+    edge_x_dict[key] = x_s[valid] + delta_m * ux[ok][::stride][valid]
+    edge_y_dict[key] = y_s[valid] + delta_m * uy[ok][::stride][valid]
+    
+    
+    
+    
+    
+    
+    
+plot_BL_location_tecplot(edge_x_dict, edge_y_dict, file_paths, ds_by_case)
 #%% Saving the boundary layer height results ##
 
 
