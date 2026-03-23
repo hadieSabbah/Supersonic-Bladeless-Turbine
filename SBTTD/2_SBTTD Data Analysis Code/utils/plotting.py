@@ -68,92 +68,95 @@ def plotter(x, y, x_string, y_string, unit_x, unit_y, save = False, return_axes 
 
         
 
-    def plot_BL_thickness_subplots(delta_n_dict, x_start_dict, save=False,
-                                save_dir=Path(r"C:\Users\hhsabbah\Documents\01_Bladeless_Proj\35_Git\Supersonic-Bladeless-Turbine\SBTTD\reports\figures\Mach Study")):
-        """
-        All h/l cases in one figure — one subplot per h/l, curves = Mach numbers.
-    
-        Parameters
-        ----------
-        delta_n_dict  : dict  {case_key: np.ndarray}  BL thickness [mm]
-        x_start_dict  : dict  {case_key: np.ndarray}  rake x-positions [m]
-        save          : bool
-        save_dir      : Path
-        """
-    
-        mpl.rcParams['font.family']     = 'serif'
-        mpl.rcParams['font.serif']      = ['Times New Roman']
-        mpl.rcParams['font.size']       = 24
-        mpl.rcParams['axes.labelsize']  = 16
-        mpl.rcParams['axes.titlesize']  = 34
-        mpl.rcParams['xtick.labelsize'] = 12
-        mpl.rcParams['ytick.labelsize'] = 12
-        mpl.rcParams['figure.dpi']      = 600
-        mpl.rcParams['savefig.dpi']     = 600
-        mpl.rcParams['axes.linewidth']  = 1
-        mpl.rcParams['lines.linewidth'] = 3
-        mpl.rcParams['grid.linewidth']  = 0.5
-    
-        # --- Extract and sort unique h/l values ---
-        hl_set = set()
-        for key in delta_n_dict:
-            m = re.search(r'h_l_([\d.x]+)', key)
-            if m:
-                hl_set.add(m.group(1))
-        hl_values = sorted(hl_set, key=lambda v: float('inf') if v == 'x' else float(v))
-    
-        n_hl  = len(hl_values)
-        ncols = 3
-        nrows = int(np.ceil(n_hl / ncols))
-    
-        fig, axes = plt.subplots(nrows, ncols, figsize=(5 * ncols, 3.5 * nrows))
-        axes_flat  = axes.flatten()
-    
-        for ax_idx, hl in enumerate(hl_values):
-            ax = axes_flat[ax_idx]
-    
-            # All keys for this h/l, sorted by Mach
-            keys_for_hl = sorted(
-                [k for k in delta_n_dict if re.search(rf'h_l_{re.escape(hl)}_', k)],
-                key=lambda k: float(re.search(r'Mach_([\d.]+)', k).group(1))
-            )
-    
-            n_curves = len(keys_for_hl)
-            cmap     = cm.get_cmap('cividis', n_curves)
-    
-            for i, key in enumerate(keys_for_hl):
-                mach_match = re.search(r'Mach_([\d.]+)', key)
-                label      = f"M = {mach_match.group(1)}" if mach_match else key
-    
-                ax.plot(x_start_dict[key], delta_n_dict[key], color=cmap(i), label=label)
-    
-            ax.set_title(f"h/l = {hl}")
-            ax.set_xlabel(r"X [m]")
-            ax.set_ylabel(r"BL $\delta$ [mm]")
-            ax.legend(frameon=False, fontsize=6)
-            ax.grid(True, alpha=0.3)
-    
-        # Hide unused subplot slots
-        for ax_idx in range(n_hl, len(axes_flat)):
-            axes_flat[ax_idx].set_visible(False)
-    
-        fig.suptitle("Boundary Layer Thickness — All Cases", fontsize=14)
-        plt.tight_layout()
-        plt.show()
-    
-        if save:
-            save_dir = Path(save_dir)
-            save_dir.mkdir(parents=True, exist_ok=True)
-            fig.savefig(save_dir / "BL_thickness_all_cases.png", dpi=600, bbox_inches='tight')
-            fig.savefig(save_dir / "BL_thickness_all_cases.pdf",            bbox_inches='tight')
-    
-        plt.close(fig)
+def plot_BL_thickness_subplots(delta_n_dict, x_start_dict, save=False,
+                            save_dir=Path(r"C:\Users\hhsabbah\Documents\01_Bladeless_Proj\35_Git\Supersonic-Bladeless-Turbine\SBTTD\reports\figures\Mach Study")):
+    """
+    All h/l cases in one figure — one subplot per h/l, curves = Mach numbers.
+
+    Parameters
+    ----------
+    delta_n_dict  : dict  {case_key: np.ndarray}  BL thickness [mm]
+    x_start_dict  : dict  {case_key: np.ndarray}  rake x-positions [m]
+    save          : bool
+    save_dir      : Path
+    """
+
+    mpl.rcParams['font.family']     = 'serif'
+    mpl.rcParams['font.serif']      = ['Times New Roman']
+    mpl.rcParams['font.size']       = 24
+    mpl.rcParams['axes.labelsize']  = 16
+    mpl.rcParams['axes.titlesize']  = 34
+    mpl.rcParams['xtick.labelsize'] = 12
+    mpl.rcParams['ytick.labelsize'] = 12
+    mpl.rcParams['figure.dpi']      = 600
+    mpl.rcParams['savefig.dpi']     = 600
+    mpl.rcParams['axes.linewidth']  = 1
+    mpl.rcParams['lines.linewidth'] = 3
+    mpl.rcParams['grid.linewidth']  = 0.5
+
+    # --- Extract and sort unique h/l values ---
+    hl_set = set()
+    for key in delta_n_dict:
+        m = re.search(r'h_l_([\d.x]+)', key)
+        if m:
+            hl_set.add(m.group(1))
+    hl_values = sorted(hl_set, key=lambda v: float('inf') if v == 'x' else float(v))
+
+    n_hl  = len(hl_values)
+    ncols = 3
+    nrows = int(np.ceil(n_hl / ncols))
+
+    fig, axes = plt.subplots(nrows, ncols, figsize=(5 * ncols, 3.5 * nrows))
+    axes_flat  = axes.flatten()
+
+    for ax_idx, hl in enumerate(hl_values):
+        ax = axes_flat[ax_idx]
+
+        # All keys for this h/l, sorted by Mach
+        keys_for_hl = sorted(
+            [k for k in delta_n_dict if re.search(rf'h_l_{re.escape(hl)}_', k)],
+            key=lambda k: float(re.search(r'Mach_([\d.]+)', k).group(1))
+        )
+
+        n_curves = len(keys_for_hl)
+        cmap     = cm.get_cmap('cividis', n_curves)
+
+        for i, key in enumerate(keys_for_hl):
+            mach_match = re.search(r'Mach_([\d.]+)', key)
+            label      = f"M = {mach_match.group(1)}" if mach_match else key
+
+            ax.plot(x_start_dict[key], delta_n_dict[key], color=cmap(i), label=label)
+
+        ax.set_title(f"h/l = {hl}")
+        ax.set_xlabel(r"X [m]")
+        ax.set_ylabel(r"BL $\delta$ [mm]")
+        ax.legend(frameon=False, fontsize=6)
+        ax.grid(True, alpha=0.3)
+
+    # Hide unused subplot slots
+    for ax_idx in range(n_hl, len(axes_flat)):
+        axes_flat[ax_idx].set_visible(False)
+
+    fig.suptitle("Boundary Layer Thickness — All Cases", fontsize=14)
+    plt.tight_layout()
+    plt.show()
+
+    if save:
+        save_dir = Path(save_dir)
+        save_dir.mkdir(parents=True, exist_ok=True)
+        fig.savefig(save_dir / "BL_thickness_all_cases.png", dpi=600, bbox_inches='tight')
+        fig.savefig(save_dir / "BL_thickness_all_cases.pdf",            bbox_inches='tight')
+
+    plt.close(fig)
     
     
     
 def plot_BL_location_tecplot(edge_x_dict, edge_y_dict, file_paths, ds_by_case,
                               save_dir=Path(r"C:\Users\hhsabbah\Documents\01_Bladeless_Proj\35_Git\Supersonic-Bladeless-Turbine\SBTTD\reports\figures\Mach Study\BL_Location_Tecplot")):
-
+    import tecplot as tp
+    from tecplot.constant import PlotType, SymbolType,GeomShape, Color, ContourType
+    
+    
     save_dir = Path(save_dir)
     save_dir.mkdir(parents=True, exist_ok=True)
 
@@ -166,34 +169,70 @@ def plot_BL_location_tecplot(edge_x_dict, edge_y_dict, file_paths, ds_by_case,
             print(f"Skipping {key} — no BL edge points found.")
             continue
 
-        # Load case into Tecplot
         tp.new_layout()
         tp.data.load_tecplot(file_paths[idx].as_posix())
-        fr = tp.active_frame()
+        fr   = tp.active_frame()
         fr.plot_type = PlotType.Cartesian2D
         test = fr.dataset
         plot = fr.plot()
-
-        # Create BL edge zone
+        
+        # Enable contour display on all flow field zones
+        plot.show_contour = True
+        plot.show_scatter = True
+        
+        for i in range(test.num_zones):
+            try:
+                fm = plot.fieldmap(i)
+                fm.show         = True
+                fm.contour.show = True
+                fm.mesh.show    = False
+            except:
+                pass
+        
+        # Add BL edge zone
         bl_zone = test.add_ordered_zone('BL_Edge', len(edge_x))
         bl_zone.values('X')[:] = edge_x
         bl_zone.values('Y')[:] = edge_y
-        bl_zone.values('Z')[:] = 0.0
-
-        # Configure scatter appearance
-        plot.show_scatter            = True
-        fieldmap                     = plot.fieldmap(bl_zone)
-        fieldmap.scatter.show        = True
-        fieldmap.scatter.symbol_type = GeomShape.Circle
-        fieldmap.scatter.color       = Color.Red
-        fieldmap.scatter.size        = 1.5
-        fieldmap.mesh.show           = False
-        fieldmap.contour.show        = False
-
-        # Fit view and save
+        bl_zone.values('Z')[:] = np.zeros(len(edge_x))
+        
+        
+        # Enable plot-level layers
+        plot.show_contour = True
+        plot.show_scatter = True
+        
+        # Assign contour variable and levels
+        contour = plot.contour(0)
+        contour.variable          = test.variable('U')
+        contour.colormap_name     = 'Diverging - Blue/Red'
+        contour.levels.reset_to_nice()
+        
+        # Flood contour on all existing flow zones, scatter OFF
+        for i in range(test.num_zones):
+            try:
+                fm = plot.fieldmap(i)
+                fm.show                              = True
+                fm.scatter.show                      = False    # <-- turn off scatter for flow zones
+                fm.contour.show                      = True
+                fm.contour.contour_type              = ContourType.Flood
+                fm.contour.flood_contour_group_index = 0
+                fm.mesh.show                         = False
+            except:
+                pass
+            
+    
+    
+    
+        # Configure scatter on BL zone only
+        fieldmap                      = plot.fieldmap(bl_zone)
+        fieldmap.scatter.show         = True
+        fieldmap.scatter.symbol_type  = SymbolType.Geometry
+        fieldmap.scatter.symbol().shape = GeomShape.Circle
+        fieldmap.scatter.color        = Color.Green
+        fieldmap.scatter.size         = 0.5
+        fieldmap.mesh.show            = False
+        fieldmap.contour.show         = False
+        
         plot.view.fit()
-        tp.session.redraw()
-
         out_path = save_dir / f"BL_location_{key}.png"
         tp.export.save_png(out_path.as_posix(), width=1920)
         print(f"Saved: {out_path}")

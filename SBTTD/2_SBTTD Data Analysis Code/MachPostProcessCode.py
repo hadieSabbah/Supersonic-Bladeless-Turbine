@@ -405,7 +405,7 @@ plot_BL_thickness_subplots(delta_n_dict, x_start_dict, save=False)
 
 #%% Plotting the results on tecplot 
 from tecplot.constant import PlotType, GeomShape, Color
-
+import tecplot as tp
 
 
 
@@ -445,7 +445,7 @@ for key in delta_n_dict:
     
     
     
-    
+    #%%
     
     
 plot_BL_location_tecplot(edge_x_dict, edge_y_dict, file_paths, ds_by_case)
