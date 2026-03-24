@@ -84,11 +84,11 @@ def plot_BL_thickness_subplots(delta_n_dict, x_start_dict, save=False,
     mpl.rcParams['font.family']     = 'serif'
     mpl.rcParams['font.serif']      = ['Times New Roman']
     mpl.rcParams['font.size']       = 24
-    mpl.rcParams['axes.labelsize']  = 16
+    mpl.rcParams['axes.labelsize']  = 34
     mpl.rcParams['axes.titlesize']  = 34
     mpl.rcParams['xtick.labelsize'] = 12
     mpl.rcParams['ytick.labelsize'] = 12
-    mpl.rcParams['figure.dpi']      = 600
+    mpl.rcParams['figure.dpi']      = 1200
     mpl.rcParams['savefig.dpi']     = 600
     mpl.rcParams['axes.linewidth']  = 1
     mpl.rcParams['lines.linewidth'] = 3
@@ -124,29 +124,38 @@ def plot_BL_thickness_subplots(delta_n_dict, x_start_dict, save=False,
         for i, key in enumerate(keys_for_hl):
             mach_match = re.search(r'Mach_([\d.]+)', key)
             label      = f"M = {mach_match.group(1)}" if mach_match else key
-
             ax.plot(x_start_dict[key], delta_n_dict[key], color=cmap(i), label=label)
 
         ax.set_title(f"h/l = {hl}")
         ax.set_xlabel(r"X [m]")
         ax.set_ylabel(r"BL $\delta$ [mm]")
-        ax.legend(frameon=False, fontsize=6)
+        # ax.legend(...)  <-- remove this line
         ax.grid(True, alpha=0.3)
 
     # Hide unused subplot slots
     for ax_idx in range(n_hl, len(axes_flat)):
         axes_flat[ax_idx].set_visible(False)
 
-    fig.suptitle("Boundary Layer Thickness — All Cases", fontsize=14)
+    # Single figure-level legend from the first subplot's handles
+    handles, labels = axes_flat[0].get_legend_handles_labels()
+    fig.legend(handles, labels,
+               loc='center left',
+               bbox_to_anchor=(1.01, 0.5),   # just outside the right edge
+               frameon=False,
+               fontsize=12,
+               title='Mach Number',
+               title_fontsize=13)
+
+    fig.suptitle("Boundary Layer Thickness — All Cases", fontsize=24)
     plt.tight_layout()
     plt.show()
 
     if save:
         save_dir = Path(save_dir)
         save_dir.mkdir(parents=True, exist_ok=True)
-        fig.savefig(save_dir / "BL_thickness_all_cases.png", dpi=600, bbox_inches='tight')
-        fig.savefig(save_dir / "BL_thickness_all_cases.pdf",            bbox_inches='tight')
-
+        fig.savefig(save_dir / "BL_thickness_all_cases.png", dpi=600,
+                    bbox_inches='tight')   # bbox_inches='tight' ensures legend is not clipped
+        fig.savefig(save_dir / "BL_thickness_all_cases.pdf", bbox_inches='tight')
     plt.close(fig)
     
     
@@ -159,6 +168,7 @@ def plot_BL_location_tecplot(edge_x_dict, edge_y_dict, file_paths, ds_by_case,
     
     save_dir = Path(save_dir)
     save_dir.mkdir(parents=True, exist_ok=True)
+    tp.session.connect()
 
     for idx, key in enumerate(ds_by_case.keys()):
 
@@ -222,7 +232,7 @@ def plot_BL_location_tecplot(edge_x_dict, edge_y_dict, file_paths, ds_by_case,
     
     
     
-        # Configure scatter on BL zone only
+        # Configure scatter on BL zone only #
         fieldmap                      = plot.fieldmap(bl_zone)
         fieldmap.scatter.show         = True
         fieldmap.scatter.symbol_type  = SymbolType.Geometry
@@ -233,6 +243,14 @@ def plot_BL_location_tecplot(edge_x_dict, edge_y_dict, file_paths, ds_by_case,
         fieldmap.contour.show         = False
         
         plot.view.fit()
+
+        # Zoom into BL region #
+        plot.axes.x_axis.min = 0.0
+        plot.axes.x_axis.max = 0.1   # adjust to your geometry length
+        plot.axes.y_axis.min = -0.02
+        plot.axes.y_axis.max = 0.07
+        
+        # Outputting file # 
         out_path = save_dir / f"BL_location_{key}.png"
         tp.export.save_png(out_path.as_posix(), width=1920)
         print(f"Saved: {out_path}")
