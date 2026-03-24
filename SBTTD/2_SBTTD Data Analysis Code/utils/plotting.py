@@ -86,8 +86,8 @@ def plot_BL_thickness_subplots(delta_n_dict, x_start_dict, save=False,
     mpl.rcParams['font.size']       = 24
     mpl.rcParams['axes.labelsize']  = 34
     mpl.rcParams['axes.titlesize']  = 34
-    mpl.rcParams['xtick.labelsize'] = 12
-    mpl.rcParams['ytick.labelsize'] = 12
+    mpl.rcParams['xtick.labelsize'] = 18
+    mpl.rcParams['ytick.labelsize'] = 18
     mpl.rcParams['figure.dpi']      = 1200
     mpl.rcParams['savefig.dpi']     = 600
     mpl.rcParams['axes.linewidth']  = 1
@@ -142,9 +142,9 @@ def plot_BL_thickness_subplots(delta_n_dict, x_start_dict, save=False,
                loc='center left',
                bbox_to_anchor=(1.01, 0.5),   # just outside the right edge
                frameon=False,
-               fontsize=12,
+               fontsize=18,
                title='Mach Number',
-               title_fontsize=13)
+               title_fontsize=18)
 
     fig.suptitle("Boundary Layer Thickness — All Cases", fontsize=24)
     plt.tight_layout()
@@ -1210,3 +1210,211 @@ def mass_flux_imbalance_analyzer(root_dir=None, file_name_total="minfo1_e1",
     return results, common_cases
 
 
+def plot_mach_contours_per_hl(
+    hl_value: float,
+    viscous_dir: str,
+    save: bool = False,
+    save_dir: str = None,
+    figsize: tuple = None,
+    ncols: int = 3,
+):
+    """
+    For a single h/l value, load all viscous Mach contour PNG images
+    and display them in a subplot grid (one panel per Mach number).
+
+    Parameters
+    ----------
+    hl_value : float
+        The h/l value to plot (e.g., 0.02, 0.03, ...).
+    viscous_dir : str
+        Path to the folder containing viscous PNG files.
+        Naming convention: h_l_{hl}_Mach_{mach}.png
+    save : bool
+        Whether to save the figure.
+    save_dir : str or None
+        Directory to save the figure. Required if save=True.
+    figsize : tuple or None
+        Figure size. Auto-calculated if None.
+    ncols : int
+        Number of columns in the subplot grid (default 3).
+    """
+    # --- Publication rcParams (consistent with your codebase) ---
+    mpl.rcParams['font.family']      = 'serif'
+    mpl.rcParams['font.serif']       = ['Times New Roman']
+    mpl.rcParams['axes.titlesize']   = 10
+    mpl.rcParams['axes.labelsize']   = 9
+    mpl.rcParams['xtick.labelsize']  = 7
+    mpl.rcParams['ytick.labelsize']  = 7
+    mpl.rcParams['figure.dpi']       = 150   # screen preview
+    mpl.rcParams['savefig.dpi']      = 600
+
+    viscous_path = Path(viscous_dir)
+
+    # --- Glob and sort matching files ---
+    # Pattern: h_l_0.03_Mach_1.5.png  (hl formatted to 2 decimal places)
+    hl_str   = f"{float(hl_value):.2f}"
+    pattern  = f"h_l_{hl_str}_Mach_*.png"
+    img_files = sorted(
+        viscous_path.glob(pattern),
+        key=lambda p: float(re.search(r'Mach_([\d.]+)', p.stem).group(1))
+    )
+
+    if not img_files:
+        print(f"[plot_mach_contours_per_hl] No files found for h/l = {hl_str} in {viscous_dir}")
+        return
+
+    n     = len(img_files)
+    nrows = int(np.ceil(n / ncols))
+
+    if figsize is None:
+        figsize = (5 * ncols, 3.5 * nrows)
+
+    fig, axes = plt.subplots(nrows, ncols, figsize=figsize)
+    axes_flat = np.array(axes).flatten()
+
+    for idx, img_path in enumerate(img_files):
+        ax    = axes_flat[idx]
+        img   = plt.imread(str(img_path))           # loads as float [0,1] RGBA or RGB
+        ax.imshow(img)
+        ax.axis('off')                               # images have their own axes baked in
+
+        # Extract Mach number for the subplot title
+        mach_match = re.search(r'Mach_([\d.]+)', img_path.stem)
+        title = f"M = {mach_match.group(1)}" if mach_match else img_path.stem
+        ax.set_title(title, fontsize=10)
+
+    # Hide any unused axes
+    for ax in axes_flat[n:]:
+        ax.set_visible(False)
+
+    fig.suptitle(f"Mach Contours — Viscous — h/l = {hl_str}", fontsize=12, y=1.01)
+    plt.tight_layout()
+    plt.show()
+
+    if save:
+        save_path = Path(save_dir)
+        save_path.mkdir(parents=True, exist_ok=True)
+        stem = f"MachContours_viscous_hl_{hl_str}"
+        fig.savefig(save_path / f"{stem}.png", dpi=600, bbox_inches='tight')
+        fig.savefig(save_path / f"{stem}.pdf",            bbox_inches='tight')
+
+    plt.close(fig)
+    return fig, axes
+
+
+def plot_viscous_vs_inviscid_contours(
+    hl_value: float,
+    viscous_dir: str,
+    inviscid_dir: str,
+    save: bool = False,
+    save_dir: str = None,
+    figsize: tuple = None,
+    mach_range: list = None,
+):
+    """
+    For a single h/l value, plot viscous (top row) vs inviscid (bottom row)
+    Mach contour images. Each column = one Mach number.
+
+    Layout (6 Mach numbers):
+        Row 0 [Viscous ]:  M1.5  M2.0  M2.5  M3.0  M3.5  M4.0
+        Row 1 [Inviscid]:  M1.5  M2.0  M2.5  M3.0  M3.5  M4.0
+
+    Parameters
+    ----------
+    hl_value : float
+        The h/l value to compare (e.g., 0.02, 0.05, ...).
+    viscous_dir : str
+        Path to folder containing viscous PNG files.
+    inviscid_dir : str
+        Path to folder containing inviscid PNG files.
+        Both use the same naming convention: h_l_{hl}_Mach_{mach}.png
+    save : bool
+        Whether to save the figure.
+    save_dir : str or None
+        Directory to save. Required if save=True.
+    figsize : tuple or None
+        Figure size. Auto-calculated if None.
+    mach_range : list or None
+        Optional list of Mach numbers to include, e.g. [1.5, 2.0, 3.0].
+        If None, all available Mach numbers are used.
+    """
+    mpl.rcParams['font.family']    = 'serif'
+    mpl.rcParams['font.serif']     = ['Times New Roman']
+    mpl.rcParams['axes.titlesize'] = 24
+    mpl.rcParams['figure.dpi']     = 600
+    mpl.rcParams['savefig.dpi']    = 600
+
+    viscous_path  = Path(viscous_dir)
+    inviscid_path = Path(inviscid_dir)
+
+    hl_str  = f"{float(hl_value):.2f}"
+    pattern = f"h_l_{hl_str}_Mach_*.png"
+
+    # --- Collect and sort viscous files by Mach number ---
+    viscous_files = sorted(
+        viscous_path.glob(pattern),
+        key=lambda p: float(re.search(r'Mach_([\d.]+)', p.stem).group(1))
+    )
+
+    # --- Filter to requested Mach numbers if mach_range is provided ---
+    if mach_range is not None:
+        mach_range_float = [float(m) for m in mach_range]
+        viscous_files = [
+            p for p in viscous_files
+            if float(re.search(r'Mach_([\d.]+)', p.stem).group(1)) in mach_range_float
+        ]
+
+    if not viscous_files:
+        print(f"[plot_viscous_vs_inviscid_contours] No viscous files found for h/l = {hl_str}")
+        return
+
+    n_mach = len(viscous_files)
+    nrows  = 2
+    ncols  = n_mach
+
+    if figsize is None:
+        figsize = (4.5 * ncols, 3.2* nrows)
+ 
+    fig, axes = plt.subplots(nrows, ncols, figsize=figsize)
+
+    if ncols == 1:
+        axes = axes[:, np.newaxis]
+
+    axes[0, 0].set_ylabel("Viscous",  fontsize=24, fontweight='bold',
+                           rotation=90, labelpad=4)
+    axes[1, 0].set_ylabel("Inviscid", fontsize=24, fontweight='bold',
+                           rotation=90, labelpad=4)
+
+    for col, v_path in enumerate(viscous_files):
+        mach_match = re.search(r'Mach_([\d.]+)', v_path.stem)
+        mach_str   = mach_match.group(1) if mach_match else "?"
+
+        ax_v = axes[0, col]
+        ax_v.imshow(plt.imread(str(v_path)))
+        ax_v.axis('off')
+        ax_v.set_title(f"M = {mach_str}", fontsize=21)
+
+        i_path = inviscid_path / v_path.name
+        ax_i   = axes[1, col]
+        ax_i.axis('off')
+        if i_path.exists():
+            ax_i.imshow(plt.imread(str(i_path)))
+        else:
+            ax_i.text(0.5, 0.5, f"M={mach_str}\nNot found",
+                      ha='center', va='center',
+                      transform=ax_i.transAxes, fontsize=24, color='gray')
+
+    fig.suptitle(f"Viscous vs Inviscid — Mach Contours — h/l = {hl_str}",
+                 fontsize=24, y=1.01)
+    plt.tight_layout()
+    plt.show()
+
+    if save:
+        save_path = Path(save_dir)
+        save_path.mkdir(parents=True, exist_ok=True)
+        stem = f"ViscVsInv_MachContours_hl_{hl_str}"
+        fig.savefig(save_path / f"{stem}.png", dpi=600, bbox_inches='tight')
+        fig.savefig(save_path / f"{stem}.pdf",            bbox_inches='tight')
+
+    plt.close(fig)
+    return fig, axes

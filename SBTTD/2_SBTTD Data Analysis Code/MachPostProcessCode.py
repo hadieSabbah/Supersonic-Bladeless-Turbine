@@ -26,7 +26,7 @@ import utils.plotting
 
 from utils.parameterComputation import variableImporterMasked, ReCompute, yplusThreshold
 from utils.dataload_util import assign_dir, bigImport, runSaver, runLoader, file_pathFinder, load_minfo_step_force
-from utils.plotting import plotter, plotter_multi_all, plotter_multiPerCase, subplotter, plot_scaled_axialForce_vs_hl,plot_BL_thickness,plot_BL_location_tecplot,plot_BL_thickness_subplots
+from utils.plotting import plotter, plotter_multi_all, plotter_multiPerCase, subplotter, plot_scaled_axialForce_vs_hl,plot_BL_thickness,plot_BL_location_tecplot,plot_BL_thickness_subplots, plot_mach_contours_per_hl, plot_viscous_vs_inviscid_contours
 from utils.models import analyze_geometries, get_first_shock_pressures, offsetGeomPoints, smallPertSolver, find_sepLength, max_min_finder,mach_vs_sepLength, smallPertSolver_with_SE, smallPertSolver_combined
 
 
@@ -403,6 +403,9 @@ plot_BL_thickness(delta_n_dict, x_start_dict, save=True)
 plot_BL_thickness_subplots(delta_n_dict, x_start_dict, save=False)
 
 
+
+
+
 #%% Plotting the results on tecplot 
 from tecplot.constant import PlotType, GeomShape, Color
 import tecplot as tp
@@ -487,6 +490,48 @@ loaded = np.load(latest_dir / "delta_n_dict.npz", allow_pickle=False)
 delta_n_dict = {key: loaded[key] for key in loaded.files}
 
 print(f"Loaded delta_n_dict from {latest_dir}")
+
+
+
+
+
+
+
+#%%
+"""
+#------------------------------------------------------------------------------------------------------------------------------------#
+                                                 Plotting the Mach contours and inviscid contours
+#------------------------------------------------------------------------------------------------------------------------------------#
+"""
+
+
+VISCOUS_DIR  = r"\\oitrspprd.hpc.ncsu.edu\rsstu\users\j\jbraun2\yip_afosr\hhsabbah\32_Geometry Code\Results\2_Contours\1_Viscous Simulations\1_Mach Study\1_Mach Contour"
+INVISCID_DIR = r"\\oitrspprd.hpc.ncsu.edu\rsstu\users\j\jbraun2\yip_afosr\hhsabbah\32_Geometry Code\Results\2_Contours\2_Inviscid Simulations\1_Mach Study\1_Mach Contour"
+
+# Function 1 — all Mach contours for h/l = 0.03, 3 columns
+plot_mach_contours_per_hl(
+    hl_value    = 0.03,
+    viscous_dir = VISCOUS_DIR,
+    ncols       = 3,
+    save        = True,
+    save_dir    = r"C:\Users\hhsabbah\Documents\01_Bladeless_Proj\37_Mesh and CFD Setup\8_Proccessed Contours Results\1_Mach Sweep Study"
+)
+
+
+#%%
+
+# Function 2 — viscous vs inviscid for h/l = 0.05
+
+mach_range = [1.5,4.0]
+plot_viscous_vs_inviscid_contours(
+    hl_value     = 0.06,
+    viscous_dir  = VISCOUS_DIR,
+    inviscid_dir = INVISCID_DIR,
+    save         = True,
+    save_dir     = r"C:\Users\hhsabbah\Documents\01_Bladeless_Proj\37_Mesh and CFD Setup\8_Proccessed Contours Results\2_Inviscid Comparison",
+    mach_range = mach_range
+)
+
 
 #%%
 
