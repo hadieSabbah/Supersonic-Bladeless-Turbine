@@ -2879,3 +2879,716 @@ def mach_vs_sepLength(ds_by_case, x, y, sep_length_nonDim):
     plt.show()
 
     return machs
+
+
+"""
+#------------------------------------------------------------------------------------------------------------------------------------#
+                                                          Torque calculations 
+#------------------------------------------------------------------------------------------------------------------------------------#
+
+"""
+
+
+def compute_power_2D(x, y, p, R, omega):
+    """
+    Power per unit span from 2D pressure profile.
+    
+    Returns: F_theta [N/m], tau [N], P [W/m]
+    """
+    dydx = np.gradient(y, x)
+    
+    if hasattr(np, 'trapezoid'):
+        F_theta = -np.trapezoid(p * dydx, x)
+    else:
+        F_theta = -np.trapz(p * dydx, x)
+    
+    tau = F_theta * R      # [N·m/m] = [N]
+    P = tau * omega        # [W/m]
+    
+    return {
+     'F_theta': F_theta,      # [N/m] per unit span
+     'tau': tau,              # [N·m] torque
+     'P': P,                  # [W] power
+     'P_kW': P / 1000         # [kW] power
+     }
+
+
+
+def compute_force_2D(x, y, p, R):
+    """
+    Tangential force and torque from 2D pressure profile.
+    
+    Returns: F_theta [N/m], tau [N·m/m]
+    """
+    dydx = np.gradient(y, x)
+    
+    if hasattr(np, 'trapezoid'):
+        F_theta = -np.trapezoid(p * dydx, x)
+    else:
+        F_theta = -np.trapz(p * dydx, x)
+    
+    tau = F_theta * R
+    
+    return {
+        'F_theta': F_theta,          # [N] total tangential force
+        'tau': tau, # [N/m] per unit span 
+        }
+
+
+
+def compute_torque_2D_norm(x, y, p, R):
+    """
+    Tangential force and torque per unit span from 2D pressure profile.
+    
+    Parameters
+    ----------
+    x, y : arrays - wall coordinates [m]
+    p : array - wall pressure [Pa]
+    R : float - radius from rotation axis [m]
+    
+    Returns
+    -------
+    dict with:
+        F_theta : tangential force per unit span [N/m]
+        tau : torque per unit span per unit length [N·m/m²]
+    """
+    dydx = np.gradient(y, x)
+    
+    if hasattr(np, 'trapezoid'):
+        F_theta = -np.trapezoid(p * dydx, x)
+    else:
+        F_theta = -np.trapz(p * dydx, x)
+    
+    tau = F_theta * R
+    
+    # Normalize by projected length
+    L = x[-1] - x[0]
+    
+    return {
+        'F_theta': F_theta / L,   # [N/m²] per unit span per unit length
+        'tau': tau / L            # [N·m/m²] per unit span per unit length
+    }
+
+
+
+def load_csv_data(filepath, x_col='x', y_col='y', p_col='p'):
+    """Load pressure profile from CSV file."""
+    df = pd.read_csv(filepath)
+    return df[x_col].values, df[y_col].values, df[p_col].values
+
+
+
+
+
+def load_tecplot_data(filepath):
+    """
+    Load pressure profile from Tecplot ASCII file.
+    Assumes columns are: X, Y, Pressure (or similar).
+    """
+    data = []
+    with open(filepath, 'r') as f:
+        for line in f:
+            try:
+                values = [float(v) for v in line.split()]
+                if len(values) >= 3:
+                    data.append(values[:3])
+            except ValueError:
+                continue
+    
+    data = np.array(data)
+    # Sort by x
+    idx = np.argsort(data[:, 0])
+    return data[idx, 0], data[idx, 1], data[idx, 2]
+
+def generate_torque_table_mach(df, output_path='torque_table_mach.png', title=None):
+    """
+    Generate a formatted pivot table image from the torque comparison DataFrame.
+    
+    Parameters
+    ----------
+    df : pandas DataFrame
+        Must contain columns: 'Mach', 'h/l', 'tau_h_l_x [N·m/m²]', 'tau_h_l [N·m/m²]'
+    output_path : str
+        Path to save the output image
+    title : str, optional
+        Custom title for the table
+    
+    Returns
+    -------
+    None (saves image to output_path)
+    
+    How it works:
+    -------------
+    1. Extract unique Mach numbers and h/l values from the DataFrame
+    2. Get tau_h_l_x values (one per Mach - these go in the first data row)
+    3. Pivot tau_h_l values so Mach becomes columns, h/l becomes rows
+    4. Build the table structure and apply formatting
+    """
+    
+    # Step 1: Extract unique values (sorted for consistent ordering)
+    mach_numbers = sorted(df['Mach'].unique())
+    h_l_values = sorted(df['h/l'].unique())
+    
+    # Step 2: Get tau_h_l_x values for each Mach number
+    # These are constant for each Mach, so we take the first occurrence
+    tau_x_by_mach = df.groupby('Mach')['tau_h_l_x [N·m/m²]'].first().to_dict()
+    
+    # Step 3: Pivot the tau_h_l values
+    # This transforms: rows of (Mach, h/l, tau) -> matrix[h/l][Mach] = tau
+    pivot = df.pivot(index='h/l', columns='Mach', values='tau_h_l [N·m/m²]')
+    
+    # Step 4: Build table structure
+    # Column headers: empty cell + Mach labels
+    col_labels = [""] + [f"M = {m}" for m in mach_numbers]
+    
+    # Build data rows
+    table_data = []
+    
+    # First row: tau_h_l_x values (the "x" case filtered to 0-0.09m)
+    first_row = ["h/l = Optimal"] + [f"{tau_x_by_mach[m]:.1f}" for m in mach_numbers]
+    table_data.append(first_row)
+    
+    # Subsequent rows: tau_h_l for each h/l value
+    for h_l in h_l_values:
+        row = [f"h/l = {h_l:.2f}"] + [f"{pivot.loc[h_l, m]:.1f}" for m in mach_numbers]
+        table_data.append(row)
+    
+    # Step 5: Create the figure and table
+    # Figure size scales with number of columns
+    fig_width = max(14, len(mach_numbers) * 1.5)
+    fig_height = max(6, len(h_l_values) * 0.6 + 2)
+    
+    fig, ax = plt.subplots(figsize=(fig_width, fig_height))
+    ax.axis('off')  # Hide axes - we only want the table
+    
+    # Set title
+    if title is None:
+        title = "Torque per Unit Span per Unit Length [N·m/m²]\n(h/l = x filtered to 0-0.09m, varying Mach number)"
+    fig.suptitle(title, fontsize=14, fontweight='bold', y=0.95)
+    
+    # Create table object
+    table = ax.table(
+        cellText=table_data,
+        colLabels=col_labels,
+        loc='center',
+        cellLoc='center'
+    )
+    
+    # Step 6: Apply styling
+    table.auto_set_font_size(False)
+    table.set_fontsize(10)
+    table.scale(1.2, 1.8)  # (width_scale, height_scale)
+    
+    # Style header row (row index 0 in the table object)
+    # Blue background (#2E75B6), white bold text
+    for j in range(len(col_labels)):
+        cell = table[(0, j)]
+        cell.set_facecolor('#2E75B6')
+        cell.set_text_props(color='white', fontweight='bold')
+    
+    # Style first data row (the tau_x row) - light green (#C6EFCE)
+    # Row index 1 in table object (0 is header)
+    for j in range(len(col_labels)):
+        table[(1, j)].set_facecolor('#C6EFCE')
+    
+    # Save figure
+    plt.tight_layout()
+    plt.savefig(output_path, dpi=150, bbox_inches='tight', 
+                facecolor='white', edgecolor='none', pad_inches=0.3)
+    plt.close()
+    
+    print(f"Table saved to: {output_path}")
+    
+def compute_torque_2D_norm(x, y, p, R):
+    """
+    Tangential force and torque per unit span per unit length from 2D pressure profile.
+    
+    Parameters
+    ----------
+    x, y : arrays - wall coordinates [m]
+    p : array - wall pressure [Pa]
+    R : float - radius from rotation axis [m]
+    
+    Returns
+    -------
+    dict with:
+        F_theta : tangential force per unit area [N/m²]
+        tau : torque per unit span per unit length [N·m/m²]
+    """
+    dydx = np.gradient(y, x)
+    
+    if hasattr(np, 'trapezoid'):
+        F_theta = np.trapezoid(p * dydx, x)
+    else:
+        F_theta = np.trapz(p * dydx, x)
+    
+    tau = F_theta * R
+    
+    # Normalize by projected length
+    L = x[-1] - x[0]
+    
+    return {
+        'F_theta_norm': F_theta / L,
+        'tau': tau / L,
+        'F_theta': F_theta
+    }
+
+
+#%%
+def generate_axial_force_plot_mach(df, output_path='axial_force_plot_mach.png', title=None, 
+                                    ylabel="Axial Force [N]", show_optimal=True):
+    """
+    Generate a plot of axial force vs h/l for different Mach numbers.
+    
+    Parameters
+    ----------
+    df : pandas DataFrame
+        Must contain columns: 'Mach', 'h/l', 'tau_h_l_x [N·m/m²]', 'tau_h_l [N·m/m²]'
+    output_path : str
+        Path to save the output image
+    title : str, optional
+        Custom title for the plot
+    ylabel : str
+        Label for y-axis
+    show_optimal : bool
+        Whether to show the optimal h/l reference lines
+    
+    Returns
+    -------
+    None (saves image to output_path)
+    """
+    
+    # Extract unique values
+    mach_numbers = sorted(df['Mach'].unique())
+    h_l_values = sorted(df['h/l'].unique())
+    
+    # Get tau_h_l_x (optimal) values for each Mach number
+    tau_x_by_mach = df.groupby('Mach')['tau_h_l_x [N·m/m²]'].first().to_dict()
+    
+    # Pivot for easy plotting
+    pivot = df.pivot(index='h/l', columns='Mach', values='tau_h_l [N·m/m²]')
+    
+    # Create figure
+    fig, ax = plt.subplots(figsize=(12, 8))
+    
+    # Colormap for Mach lines
+    cmap = cm.get_cmap('viridis', len(mach_numbers))
+    
+    # Plot each Mach number as a separate line
+    for i, mach in enumerate(mach_numbers):
+        color = cmap(i)
+        
+        # Plot h/l values
+        y_vals = [pivot.loc[h_l, mach] for h_l in h_l_values]
+        ax.plot(h_l_values, y_vals, 'o-', color=color, linewidth=2, 
+                markersize=8, label=f'M = {mach}')
+        
+        # Plot optimal value as a horizontal dashed line
+        if show_optimal:
+            ax.axhline(y=tau_x_by_mach[mach], color=color, linestyle='--', 
+                       alpha=0.5, linewidth=1.5)
+            
+            # Add marker at far right for optimal
+            ax.scatter(h_l_values[-1] + 0.005, tau_x_by_mach[mach], 
+                       marker='*', s=150, color=color, edgecolor='k', 
+                       linewidths=0.5, zorder=5)
+    
+    # Add annotation for optimal lines
+    if show_optimal:
+        ax.annotate('★ = Optimal h/l', xy=(0.98, 0.02), xycoords='axes fraction',
+                    fontsize=11, ha='right', va='bottom',
+                    bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
+    
+    # Formatting
+    if title is None:
+        title = "Axial Force vs h/l\n(Varying Mach Number)"
+    ax.set_title(title, fontsize=16, fontweight='bold')
+    ax.set_xlabel("h/l", fontsize=14)
+    ax.set_ylabel(ylabel, fontsize=14)
+    ax.tick_params(labelsize=12)
+    ax.grid(True, alpha=0.3)
+    ax.legend(title="Mach Number", title_fontsize=12, fontsize=11,
+              loc='center left', bbox_to_anchor=(1.02, 0.5))
+    
+    # Adjust layout
+    plt.tight_layout()
+    plt.savefig(output_path, dpi=150, bbox_inches='tight', 
+                facecolor='white', edgecolor='none')
+    plt.close()
+    
+    print(f"Plot saved to: {output_path}")
+    
+    
+    
+def generate_axial_force_plot_dual_mach(df, output_path='axial_force_dual_plot_mach.png', 
+                                         title=None, ylabel="Axial Force [N/m]"):
+    """
+    Generate a dual-panel plot:
+    - Left: Axial force vs h/l (lines for each Mach number)
+    - Right: Axial force vs Mach number (lines for each h/l)
+    
+    This helps visualize trends in both directions.
+    """
+    
+    # Extract unique values
+    mach_numbers = sorted(df['Mach'].unique())
+    h_l_values = sorted(df['h/l'].unique())
+    
+    # Get optimal values
+    tau_x_by_mach = df.groupby('Mach')['tau_h_l_x [N·m/m²]'].first().to_dict()
+    
+    # Pivot tables
+    pivot_hl = df.pivot(index='h/l', columns='Mach', values='tau_h_l [N·m/m²]')
+    pivot_mach = df.pivot(index='Mach', columns='h/l', values='tau_h_l [N·m/m²]')
+    
+    # Create figure with two subplots
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(18, 7))
+    
+    # Colormaps
+    cmap_mach = cm.get_cmap('viridis', len(mach_numbers))
+    cmap_hl = cm.get_cmap('plasma', len(h_l_values))
+    
+    # Pstatic list # 
+    pstatic_list = np.array([2.724e+05 , 1.278e+05, 58528, 27224, 13111, 6586.1])
+    
+    # Computing the shock relations subsquent to the shock # 
+    
+    
+    
+    
+    
+    
+    
+    # =========================================================================
+    # Left plot: Force vs h/l (one line per Mach number)
+    # =========================================================================
+    for i, mach in enumerate(mach_numbers):
+        color = cmap_mach(i)
+        
+        # Get y values from the pivot table
+        y_vals = np.array([pivot_hl.loc[h_l, mach] for h_l in h_l_values])
+        
+        # Build the key to get pstatic - use first h/l value for this Mach
+        # (assuming pstatic only depends on Mach, not h/l)
+        pstatic_key = f"h_l_{h_l_values[0]:.2f}_Mach_{mach}"
+        pstatic = pstatic_list[i]
+        
+        ax1.plot(h_l_values, y_vals / pstatic, 'o-', color=color, linewidth=2, 
+                 markersize=8, label=f'M = {mach}')
+        # Optimal reference line
+        ax1.plot(0.05, tau_x_by_mach[mach] / pstatic, color=color, marker = 's', markersize = 10)
+        #ax1.axhline(y=tau_x_by_mach[mach], color=color, linestyle='--', 
+         #           alpha=0.4, linewidth=1.5) # DO THE SAME THING HERE
+    
+    ax1.set_title(r"Axial Force / $P_{static}$ vs h/l", fontsize=28, fontweight='bold')
+    ax1.set_xlabel("h/l", fontsize = 21)
+    ax1.set_ylabel(ylabel, fontsize=18)
+    ax1.tick_params(labelsize=16)
+    ax1.grid(True, alpha=0.3)
+    
+    ax1.axvline(x = 0.05, color='black', linestyle = '--', linewidth = 2, label = 'Optimal')
+    ax1.legend(title="Mach", title_fontsize=16, fontsize=14, loc='best', ncol=2)
+
+
+
+
+def create_axial_force_dataframe(tau_x_dict, x_dict, mach_numbers=None, h_l_values=None):
+    """
+    Create a DataFrame from your dictionary structure for axial force analysis.
+    
+    Parameters
+    ----------
+    tau_x_dict : dict
+        Dictionary of tau_x arrays {case_name: tau_x_array}
+    x_dict : dict
+        Dictionary of x arrays {case_name: x_array}
+    mach_numbers : list, optional
+        List of Mach numbers to extract (if None, extracts all)
+    h_l_values : list, optional
+        List of h/l values to extract (if None, extracts all)
+        
+    Returns
+    -------
+    df : pandas DataFrame
+        DataFrame with columns: 'Mach', 'h/l', 'tau_h_l [N·m/m²]', 'tau_h_l_x [N·m/m²]', 'case_key'
+    """
+    import re
+    
+    data_rows = []
+    
+    # Get optimal tau_x (h/l = 0.05) for each Mach number
+    tau_x_optimal = {}
+    
+    for key in tau_x_dict.keys():
+        # Extract Mach and h/l from key
+        match_mach = re.search(r'(?:mach|M|Mach)_?([\d.]+)', key)
+        match_hl = re.search(r'h_l_([\d.]+)', key)
+        
+        if match_mach and match_hl:
+            mach = float(match_mach.group(1))
+            h_l = float(match_hl.group(1))
+            
+            # Calculate integrated axial force (trapezoidal integration)
+            # Use np.trapezoid for NumPy >= 2.0, or scipy alternative
+            try:
+                tau_integral = np.trapezoid(tau_x_dict[key], x_dict[key])
+            except AttributeError:
+                # Fallback for older NumPy versions
+                from scipy.integrate import trapezoid
+                tau_integral = trapezoid(tau_x_dict[key], x_dict[key])
+            
+            # Store optimal value (h/l = 0.05)
+            if abs(h_l - 0.05) < 1e-6:
+                tau_x_optimal[mach] = tau_integral
+            
+            data_rows.append({
+                'Mach': mach,
+                'h/l': h_l,
+                'tau_h_l [N·m/m²]': tau_integral,
+                'case_key': key  # Store the key for normalization lookup
+            })
+    
+    # Create DataFrame
+    df = pd.DataFrame(data_rows)
+    
+    # Add optimal column
+    df['tau_h_l_x [N·m/m²]'] = df['Mach'].map(tau_x_optimal)
+    
+    return df
+
+
+
+
+# =============================================================================
+# Plot generation function (Mach number version)
+# =============================================================================
+def generate_axial_force_plot_mach(df, output_path='axial_force_plot_mach.png', 
+                                    title=None, ylabel="Axial Force [N/m]", 
+                                    show_optimal=True, show_plot=True):
+    """
+    Generate a plot of axial force vs h/l for different Mach numbers.
+    
+    Parameters
+    ----------
+    df : pandas DataFrame
+        Must contain columns: 'Mach', 'h/l', 'tau_h_l_x [N·m/m²]', 'tau_h_l [N·m/m²]'
+    output_path : str
+        Path to save the output image
+    title : str, optional
+        Custom title for the plot
+    ylabel : str
+        Label for y-axis
+    show_optimal : bool
+        Whether to show the optimal h/l reference lines
+    show_plot : bool
+        Whether to display the plot in terminal (default: True)
+    
+    Returns
+    -------
+    None (saves image to output_path)
+    """
+    
+    # Extract unique values
+    mach_numbers = sorted(df['Mach'].unique())
+    h_l_values = sorted(df['h/l'].unique())
+    
+    # Get tau_h_l_x (optimal) values for each Mach number
+    tau_x_by_mach = df.groupby('Mach')['tau_h_l_x [N·m/m²]'].first().to_dict()
+    
+    # Pivot for easy plotting
+    pivot = df.pivot(index='h/l', columns='Mach', values='tau_h_l [N·m/m²]')
+    
+    # Create figure
+    fig, ax = plt.subplots(figsize=(12, 8))
+    
+    # Colormap for Mach lines
+    cmap = cm.get_cmap('viridis', len(mach_numbers))
+    
+    # Plot each Mach number as a separate line
+    for i, mach in enumerate(mach_numbers):
+        color = cmap(i)
+        
+        # Plot h/l values
+        y_vals = [pivot.loc[h_l, mach] for h_l in h_l_values]
+        ax.plot(h_l_values, y_vals, 'o-', color=color, linewidth=2, 
+                markersize=8, label=f'M = {mach}')
+        
+        # Plot optimal value as a horizontal dashed line
+        if show_optimal:
+            ax.axhline(y=tau_x_by_mach[mach], color=color, linestyle='--', 
+                       alpha=0.5, linewidth=1.5)
+            
+            # Add marker at far right for optimal
+            ax.scatter(h_l_values[-1] + 0.005, tau_x_by_mach[mach], 
+                       marker='*', s=150, color=color, edgecolor='k', 
+                       linewidths=0.5, zorder=5)
+    
+    # Add annotation for optimal lines
+    if show_optimal:
+        ax.annotate('★ = Optimal h/l', xy=(0.98, 0.02), xycoords='axes fraction',
+                    fontsize=11, ha='right', va='bottom',
+                    bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
+    
+    # Formatting
+    if title is None:
+        title = "Axial Force vs h/l\n(Varying Mach Number)"
+    ax.set_title(title, fontsize=16, fontweight='bold')
+    ax.set_xlabel("h/l", fontsize=14)
+    ax.set_ylabel(ylabel, fontsize=14)
+    ax.tick_params(labelsize=12)
+    ax.grid(True, alpha=0.3)
+    ax.legend(title="Mach Number", title_fontsize=12, fontsize=11,
+              loc='center left', bbox_to_anchor=(1.02, 0.5))
+    
+    # Adjust layout
+    plt.tight_layout()
+    plt.savefig(output_path, dpi=150, bbox_inches='tight', 
+                facecolor='white', edgecolor='none')
+    
+    if show_plot:
+        plt.show()
+    else:
+        plt.close()
+    
+    print(f"Plot saved to: {output_path}")
+
+
+def generate_axial_force_plot_dual_mach(df, first_shock_pressures,
+                                         output_path='axial_force_dual_plot_mach.png', 
+                                         title=None, ylabel="Axial Force [N/m]",
+                                         normalize_by_shock=True, show_plot=True):
+    """
+    Generate a dual-panel plot:
+    - Left: Axial force vs h/l (lines for each Mach number)
+    - Right: Axial force vs Mach number (lines for each h/l)
+    
+    Parameters
+    ----------
+    df : pandas DataFrame
+        DataFrame with axial force data (must include 'case_key' column)
+    first_shock_pressures : dict
+        Dictionary of first shock pressures {case_name: pressure}
+    output_path : str
+        Path to save the output image
+    title : str, optional
+        Custom title
+    ylabel : str
+        Label for y-axis
+    normalize_by_shock : bool
+        Whether to normalize by first shock pressure (default: True)
+    show_plot : bool
+        Whether to display the plot in terminal (default: True)
+    """
+    import re
+    
+    # Extract unique values
+    mach_numbers = sorted(df['Mach'].unique())
+    h_l_values = sorted(df['h/l'].unique())
+    
+    # Get optimal values
+    tau_x_by_mach = df.groupby('Mach')['tau_h_l_x [N·m/m²]'].first().to_dict()
+    
+    # Create normalized DataFrame if requested
+    if normalize_by_shock:
+        df_plot = df.copy()
+        df_plot['tau_h_l_norm'] = df_plot.apply(
+            lambda row: row['tau_h_l [N·m/m²]'] / first_shock_pressures[row['case_key']] 
+            if row['case_key'] in first_shock_pressures else row['tau_h_l [N·m/m²]'], 
+            axis=1
+        )
+        df_plot['tau_h_l_x_norm'] = df_plot.apply(
+            lambda row: row['tau_h_l_x [N·m/m²]'] / first_shock_pressures[row['case_key']] 
+            if row['case_key'] in first_shock_pressures else row['tau_h_l_x [N·m/m²]'], 
+            axis=1
+        )
+        
+        # Update optimal values dictionary with normalized values
+        tau_x_by_mach_norm = {}
+        for mach in mach_numbers:
+            # Find the case_key for h/l = 0.05 at this Mach
+            mask = (df_plot['Mach'] == mach) & (np.abs(df_plot['h/l'] - 0.05) < 1e-6)
+            if mask.any():
+                tau_x_by_mach_norm[mach] = df_plot.loc[mask, 'tau_h_l_norm'].iloc[0]
+        
+        # Pivot tables with normalized values
+        pivot_hl = df_plot.pivot(index='h/l', columns='Mach', values='tau_h_l_norm')
+        pivot_mach = df_plot.pivot(index='Mach', columns='h/l', values='tau_h_l_norm')
+        tau_x_by_mach_plot = tau_x_by_mach_norm
+    else:
+        # Pivot tables without normalization
+        pivot_hl = df.pivot(index='h/l', columns='Mach', values='tau_h_l [N·m/m²]')
+        pivot_mach = df.pivot(index='Mach', columns='h/l', values='tau_h_l [N·m/m²]')
+        tau_x_by_mach_plot = tau_x_by_mach
+    
+    # Create figure with two subplots
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(18, 7))
+    
+    # Colormaps
+    cmap_mach = cm.get_cmap('viridis', len(mach_numbers))
+    cmap_hl = cm.get_cmap('plasma', len(h_l_values))
+    
+    # =========================================================================
+    # Left plot: Force vs h/l (one line per Mach number)
+    # =========================================================================
+    for i, mach in enumerate(mach_numbers):
+        color = cmap_mach(i)
+        y_vals = [pivot_hl.loc[h_l, mach] for h_l in h_l_values]
+        
+        ax1.plot(h_l_values, y_vals, 'o-', color=color, linewidth=2, 
+                 markersize=8, label=f'M = {mach}')
+        
+        # Optimal reference (h/l = 0.05)
+        if mach in tau_x_by_mach_plot:
+            ax1.axhline(y=tau_x_by_mach_plot[mach], color=color, linestyle='--', 
+                        alpha=0.4, linewidth=1.5)
+    
+    title_left = "Axial Force / P_shock vs h/l" if normalize_by_shock else "Axial Force vs h/l"
+    ax1.set_title(title_left, fontsize=28, fontweight='bold')
+    ax1.set_xlabel("h/l", fontsize=21)
+    ax1.set_ylabel(ylabel, fontsize=18)
+    ax1.tick_params(labelsize=16)
+    ax1.grid(True, alpha=0.3)
+    ax1.axvline(x=0.05, color='black', linestyle='--', linewidth=2, label='Optimal')
+    ax1.legend(title="Mach", title_fontsize=16, fontsize=14, loc='best', ncol=2)
+    
+    # =========================================================================
+    # Right plot: Force vs Mach number (one line per h/l)
+    # =========================================================================
+    # First plot optimal
+    optimal_vals = [tau_x_by_mach_plot[mach] for mach in mach_numbers if mach in tau_x_by_mach_plot]
+    if optimal_vals:
+        ax2.plot(mach_numbers, optimal_vals, 'k-', linewidth=3, markersize=10, 
+                 marker='*', label='Optimal (h/l=0.05)', zorder=10)
+    
+    # Then plot each h/l
+    for i, h_l in enumerate(h_l_values):
+        color = cmap_hl(i)
+        y_vals = [pivot_mach.loc[mach, h_l] for mach in mach_numbers]
+        ax2.plot(mach_numbers, y_vals, 'o-', color=color, linewidth=2, 
+                 markersize=6, label=f'h/l = {h_l:.2f}')
+    
+    title_right = "Axial Force / P_shock vs Mach" if normalize_by_shock else "Axial Force vs Mach Number"
+    ax2.set_title(title_right, fontsize=28, fontweight='bold')
+    ax2.set_xlabel("Mach Number", fontsize=21)
+    ax2.set_ylabel(ylabel, fontsize=18)
+    ax2.tick_params(labelsize=16)
+    ax2.grid(True, alpha=0.3)
+    ax2.legend(title="h/l", title_fontsize=16, fontsize=14, loc='best', ncol=2)
+    
+    # Main title
+    if title is None:
+        title = "Axial Force Trends: h/l and Mach Number Effects"
+        if normalize_by_shock:
+            title += " (Normalized by First Shock Pressure)"
+    fig.suptitle(title, fontsize=34, fontweight='bold', y=1.02)
+    
+    plt.tight_layout()
+    plt.savefig(output_path, dpi=150, bbox_inches='tight', 
+                facecolor='white', edgecolor='none')
+    
+    if show_plot:
+        plt.show()
+    else:
+        plt.close()
+    
+    print(f"Dual plot saved to: {output_path}")

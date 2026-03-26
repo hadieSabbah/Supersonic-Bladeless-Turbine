@@ -337,6 +337,114 @@ def plot_BL_thickness(delta_n_dict, x_start_dict, save=False,
             fig.savefig(save_dir / f"{fig_name}.pdf",            bbox_inches='tight')
 
         plt.close(fig)
+        
+
+
+def subplotter_multiPerCase(x_dict, y_dict, x_string, y_string, unit_x, unit_y,
+                            filter_param, filter_values, vary_param='mach',
+                            cmap_name='cividis', figsize=None, save=False, 
+                            overall_title=None):
+    """
+    Create subplots, each filtered by a different value of filter_param.
+    
+    Parameters
+    ----------
+    filter_values : list
+        List of values to filter by (one subplot per value)
+    """
+    
+    # Set publication-quality parameters
+    mpl.rcParams['font.family'] = 'serif'
+    mpl.rcParams['font.serif'] = ['Times New Roman']
+    mpl.rcParams['axes.labelsize'] = 18
+    mpl.rcParams['axes.titlesize'] = 34
+    mpl.rcParams['xtick.labelsize'] = 14
+    mpl.rcParams['ytick.labelsize'] = 14
+    mpl.rcParams['legend.fontsize'] = 10
+    mpl.rcParams['axes.linewidth'] = 3
+    mpl.rcParams['lines.linewidth'] = 3
+    mpl.rcParams['figure.dpi'] = 150
+    mpl.rcParams['savefig.dpi'] = 600
+    
+    # Determine subplot grid
+    n_plots = len(filter_values)
+    ncols = min(2, n_plots)
+    nrows = int(np.ceil(n_plots / ncols))
+    
+    if figsize is None:
+        figsize = (4 * ncols, 3 * nrows)
+    
+    fig, axes = plt.subplots(nrows, ncols, figsize=figsize)
+    axes_flat = np.array(axes).flatten() if n_plots > 1 else [axes]
+    
+    for idx, filter_value in enumerate(filter_values):
+        ax = axes_flat[idx]
+        
+        # Filter cases
+        filtered_keys = []
+        for key in x_dict.keys():
+            if filter_param == 'h_l':
+                match = re.search(r'h_l_([\d.]+)', key)
+                if match and float(match.group(1)) == float(filter_value):
+                    filtered_keys.append(key)
+            elif filter_param == 'mach':
+                match = re.search(r'(?:mach|M|Mach)_?([\d.]+)', key)
+                if match and float(match.group(1)) == float(filter_value):
+                    filtered_keys.append(key)
+        
+        filtered_keys.sort()
+        
+        if not filtered_keys:
+            ax.set_visible(False)
+            continue
+        
+        cmap = cm.get_cmap(cmap_name, len(filtered_keys))
+        
+        for i, key in enumerate(filtered_keys):
+            # Auto-generate label
+            if vary_param == 'mach':
+                match = re.search(r'(?:mach|M|Mach)_?([\d.]+)', key)
+                label = f"M = {match.group(1)}" if match else key
+            elif vary_param == 'h_l':
+                match = re.search(r'h_l_([\d.]+)', key)
+                label = f"h/l = {match.group(1)}" if match else key
+            else:
+                label = key
+            
+            ax.plot(x_dict[key], y_dict[key], color=cmap(i), lw=5, label=label)
+        
+        # Format subplot title
+        if filter_param == 'h_l':
+            title = f"h/l = {filter_value}"
+        elif filter_param == 'mach':
+            title = f"M = {filter_value}"
+        else:
+            title = f"{filter_param} = {filter_value}"
+        
+        ax.set_title(title, fontsize = 34)
+
+        ax.set_xlabel(f"{x_string} {unit_x}")
+        ax.set_ylabel(f"{y_string} {unit_y}")
+        #ax.legend(frameon=False)
+        ax.grid(True, alpha=0.3)
+    
+    # Hide extra subplots
+    for idx in range(n_plots, len(axes_flat)):
+        axes_flat[idx].set_visible(False)
+    
+    if overall_title:
+        fig.suptitle(overall_title, fontsize=34)
+    
+    plt.tight_layout()
+    plt.show()
+    
+    if save:
+        dirc = r"C:\Users\hhsabbah\Documents\01_Bladeless_Proj\35_Git\Supersonic-Bladeless-Turbine\SBTTD\reports\figures\Mach Study"
+        figName = f"{x_string}Vs{y_string}_{filter_param}_subplots"
+        plt.savefig(rf'{dirc}\{figName}.png', dpi=600, bbox_inches='tight')
+        plt.savefig(rf'{dirc}\{figName}.pdf', bbox_inches='tight')
+    
+    return fig, axes
 
 def subplotter(nrows, ncols, x_data, y_data, x_strings, y_strings, 
                unit_x, unit_y, subplot_titles=None, figsize=None, 
