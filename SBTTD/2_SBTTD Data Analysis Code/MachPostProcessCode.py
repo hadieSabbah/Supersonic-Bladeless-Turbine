@@ -26,8 +26,8 @@ import utils.plotting
 
 from utils.parameterComputation import variableImporterMasked, ReCompute, yplusThreshold
 from utils.dataload_util import assign_dir, bigImport, runSaver, runLoader, file_pathFinder, load_minfo_step_force
-from utils.plotting import plotter, plotter_multi_all, plotter_multiPerCase, subplotter, plot_scaled_axialForce_vs_hl,plot_BL_thickness,plot_BL_location_tecplot,plot_BL_thickness_subplots, plot_mach_contours_per_hl, plot_viscous_vs_inviscid_contours, subplotter_multiPerCase
-from utils.models import analyze_geometries, get_first_shock_pressures, offsetGeomPoints, smallPertSolver, find_sepLength, max_min_finder,mach_vs_sepLength, smallPertSolver_with_SE, smallPertSolver_combined, compute_power_2D , compute_force_2D , compute_torque_2D_norm , load_csv_data, load_tecplot_data, generate_torque_table_mach , compute_torque_2D_norm, generate_axial_force_plot_mach, generate_axial_force_plot_dual_mach
+from utils.plotting import plotter, plotter_multi_all, plotter_multiPerCase, subplotter, plot_scaled_axialForce_vs_hl,plot_BL_thickness,plot_BL_location_tecplot,plot_BL_thickness_subplots, plot_mach_contours_per_hl, plot_viscous_vs_inviscid_contours, subplotter_multiPerCase, load_mcfd_info1 , load_mcfd_net_mass_flux, export_mach_contours
+from utils.models import analyze_geometries, get_first_shock_pressures, offsetGeomPoints, smallPertSolver, find_sepLength, max_min_finder,mach_vs_sepLength, smallPertSolver_with_SE, smallPertSolver_combined, compute_power_2D , compute_force_2D , compute_torque_2D_norm , load_csv_data, load_tecplot_data, generate_torque_table_mach , compute_torque_2D_norm, generate_axial_force_plot_mach, generate_axial_force_plot_dual_mach, create_axial_force_dataframe
 
 
 #%%
@@ -520,6 +520,23 @@ print(f"Loaded delta_n_dict from {latest_dir}")
 
 
 
+#%%
+"""
+#------------------------------------------------------------------------------------------------------------------------------------#
+                                                 Exporting Mach Contours in a certian Format 
+#------------------------------------------------------------------------------------------------------------------------------------#
+"""
+
+export_mach_contours(
+    study_dir   = r"C:\Users\hhsabbah\Documents\01_Bladeless_Proj\37_Mesh and CFD Setup\6_Optimized Case Sweep Study\5_Results\Run3",
+    png_dest    = r"C:\Users\hhsabbah\Documents\01_Bladeless_Proj\35_Git\Supersonic-Bladeless-Turbine\SBTTD\reports\figures\Mach Study\Mach Contours\2_Optimized Cases",
+    layout_dest = r"C:\Users\hhsabbah\Documents\01_Bladeless_Proj\35_Git\Supersonic-Bladeless-Turbine\SBTTD\tecplot layouts\machLayout.lay",
+)
+
+
+
+
+
 
 
 
@@ -531,8 +548,14 @@ print(f"Loaded delta_n_dict from {latest_dir}")
 """
 
 
-VISCOUS_DIR  = r"\\oitrspprd.hpc.ncsu.edu\rsstu\users\j\jbraun2\yip_afosr\hhsabbah\32_Geometry Code\Results\2_Contours\1_Viscous Simulations\1_Mach Study\1_Mach Contour"
-INVISCID_DIR = r"\\oitrspprd.hpc.ncsu.edu\rsstu\users\j\jbraun2\yip_afosr\hhsabbah\32_Geometry Code\Results\2_Contours\2_Inviscid Simulations\1_Mach Study\1_Mach Contour"
+#VISCOUS_DIR  = r"\\oitrspprd.hpc.ncsu.edu\rsstu\users\j\jbraun2\yip_afosr\hhsabbah\32_Geometry Code\Results\2_Contours\1_Viscous Simulations\1_Mach Study\1_Mach Contour"
+#INVISCID_DIR = r"\\oitrspprd.hpc.ncsu.edu\rsstu\users\j\jbraun2\yip_afosr\hhsabbah\32_Geometry Code\Results\2_Contours\2_Inviscid Simulations\1_Mach Study\1_Mach Contour"
+
+# Viscous dir for optimized case #
+VISCOUS_DIR = r"C:\Users\hhsabbah\Documents\01_Bladeless_Proj\35_Git\Supersonic-Bladeless-Turbine\SBTTD\reports\figures\Mach Study\Mach Contours\2_Optimized Cases"
+
+
+
 
 # Function 1 — all Mach contours for h/l = 0.03, 3 columns
 plot_mach_contours_per_hl(
@@ -542,6 +565,9 @@ plot_mach_contours_per_hl(
     save        = True,
     save_dir    = r"C:\Users\hhsabbah\Documents\01_Bladeless_Proj\37_Mesh and CFD Setup\8_Proccessed Contours Results\1_Mach Sweep Study"
 )
+
+
+
 
 
 #%%
@@ -711,6 +737,25 @@ for h_l in h_l_list:
     )
 
 
+
+#%%
+
+
+# Plot all h/l cases, but only Mach 1.5, 2.5, and 4.0 as curves
+subplotter_multiPerCase(
+    x_dict=x,
+    y_dict=y_plus,
+    x_string='x',
+    y_string=r'$y^{+}$',
+    unit_x='[m]',
+    unit_y='',
+    filter_param='h_l',
+    filter_values=[round(h, 2) for h in h_l_list],
+    vary_param='mach',
+    hl_filter=[0.02, 0.03, 0.04, 0.05, 0.06, 0.07, 0.08, 0.09],   # ← only these h/l values get a subplot
+    cmap_name='cividis'
+)
+
 #%%
 
 """
@@ -761,10 +806,23 @@ for key in x.keys():
     
     plt.show()
     
-    
-    
-    
-    
+
+#%% Subplotting results 
+subplotter_multiPerCase(
+    x_dict=x,
+    y_dict=tau_wall,
+    x_string='x',
+    y_string=r'$\tau_{wall}$',
+    unit_x='[m]',
+    unit_y='[Pa]',
+    filter_param='h_l',
+    filter_values=[round(h, 2) for h in h_l_list],
+    vary_param='mach',
+    hl_filter=[0.02, 0.04, 0.06, 0.08],   # ← only these h/l values get a subplot
+    cmap_name='cividis'
+)
+
+
     
     
 #%%
@@ -809,338 +867,6 @@ subplotter_multiPerCase(
 
 
 
-import re
-import numpy as np
-import pandas as pd
-import matplotlib.pyplot as plt
-
-def load_mcfd_info1(root_dir, outlet_selector=2):
-    """
-    Parse iCFD++ mcfd.info1 boundary flux files across multiple case folders.
-    Returns dicts compatible with plotter_multi_all() and subplotter_multiPerCase().
-
-    Parameters
-    ----------
-    root_dir : str or Path
-        Root directory containing case subfolders, each with mcfd.info1
-    outlet_selector : int
-        Selector number for the outlet boundary (default: 2)
-
-    Returns
-    -------
-    iter_dict : dict
-        {case_name: np.array of iteration numbers}
-    flux_dict : dict
-        {case_name: np.array of outlet mass flux values}
-    """
-    root_dir = Path(root_dir)
-    case_dirs = sorted([p for p in root_dir.rglob("mcfd.info1")])
-
-    iter_dict = {}
-    flux_dict = {}
-
-    for info1_path in case_dirs:
-        case_name = info1_path.parent.name
-        iters, fluxes = [], []
-        current_iter = None
-        current_sel  = None
-        in_nondim    = False
-        sel_flux     = {}
-
-        with open(info1_path) as f:
-            for line in f:
-                line = line.rstrip()
-
-                m = re.match(r'^nt\s+(\d+)', line)
-                if m:
-                    if current_iter is not None:
-                        iters.append(current_iter)
-                        fluxes.append(sel_flux.get(outlet_selector, np.nan))
-                    current_iter = int(m.group(1))
-                    sel_flux, current_sel, in_nondim = {}, None, False
-                    continue
-
-                m = re.match(r'^For selector\s+(\d+)', line)
-                if m:
-                    current_sel = int(m.group(1))
-                    in_nondim   = False
-                    continue
-
-                if 'nondimensional' in line:
-                    in_nondim = True
-                    continue
-                if 'dimensional' in line and 'non' not in line:
-                    in_nondim = False
-                    continue
-
-                if in_nondim and current_sel is not None and 'mass   flux' in line:
-                    if current_sel not in sel_flux:   # first = nondim total
-                        sel_flux[current_sel] = float(line.split()[2])
-
-        # flush last iteration
-        if current_iter is not None:
-            iters.append(current_iter)
-            fluxes.append(sel_flux.get(outlet_selector, np.nan))
-
-        iter_dict[case_name] = np.array(iters)
-        flux_dict[case_name] = np.abs(np.array(fluxes))
-
-    return iter_dict, flux_dict
-
-def load_info0(path):
-    """
-    Parse iCFD++ mcfd.info0 residual file.
-    Columns: iter | dt | L2(rho) | L2(rhou) | L2(rhoe) | CFL | tau | misc
-    Returns dict of numpy arrays.
-    """
-    data = np.loadtxt(path)
-    return {
-        "iter":    data[:, 0],
-        "L2_rho":  data[:, 2],
-        "L2_rhou": data[:, 3],
-        "L2_rhoe": data[:, 4],
-        "tau":     data[:, 6],
-    }
-
-
-def load_info1(path, outlet_selector=2):
-    """
-    Parse iCFD++ mcfd.info1 boundary flux file.
-    Extracts outlet mass flux (nondimensional) per iteration.
-    
-    Selector 1 = inlet (fixed BC), 2 = outlet (tracks convergence), 3 = wall (~0)
-    """
-    iters, outlet_flux = [], []
-    current_iter  = None
-    current_sel   = None
-    in_nondim     = False
-    sel_flux      = {}
-
-    with open(path) as f:
-        for line in f:
-            line = line.rstrip()
-
-            m = re.match(r'^nt\s+(\d+)', line)
-            if m:
-                if current_iter is not None:
-                    iters.append(current_iter)
-                    outlet_flux.append(sel_flux.get(outlet_selector, np.nan))
-                current_iter = int(m.group(1))
-                sel_flux, current_sel, in_nondim = {}, None, False
-                continue
-
-            m = re.match(r'^For selector\s+(\d+)', line)
-            if m:
-                current_sel = int(m.group(1))
-                in_nondim   = False
-                continue
-
-            if 'nondimensional' in line:
-                in_nondim = True;  continue
-            if 'dimensional' in line and 'non' not in line:
-                in_nondim = False; continue
-
-            if in_nondim and current_sel is not None and 'mass   flux' in line:
-                if current_sel not in sel_flux:          # first = nondim total
-                    sel_flux[current_sel] = float(line.split()[2])
-
-    if current_iter is not None:                         # flush last iteration
-        iters.append(current_iter)
-        outlet_flux.append(sel_flux.get(outlet_selector, np.nan))
-
-    return {
-        "iter":         np.array(iters),
-        "outlet_mflux": np.abs(np.array(outlet_flux)),
-    }
-
-
-def icfd_convergence_plotter(root_dir, case_labels=None, save=False):
-    """
-    Plot iCFD++ convergence (residuals + mass flux) for all cases under root_dir.
-    Mirrors the style of residual_plotter() and mass_flux_analyzer().
-
-    Expects structure:
-        root_dir/
-            case_A/   <- contains mcfd.info0 and mcfd.info1
-            case_B/
-            ...
-
-    Parameters
-    ----------
-    root_dir   : str or Path
-    case_labels: dict, optional  {folder_name: display_label}
-    save       : bool
-    """
-    root_dir  = Path(root_dir)
-    case_dirs = sorted([p for p in root_dir.iterdir() if p.is_dir()])
-
-    if not case_dirs:
-        print("No subdirectories found.")
-        return
-
-    # ── collect all data first ──────────────────────────────────────────────
-    cases = []
-    for d in case_dirs:
-        p0 = d / "mcfd.info0"
-        p1 = d / "mcfd.info1"
-        if not p0.exists() or not p1.exists():
-            print(f"Skipping {d.name}: missing info0 or info1")
-            continue
-        label = case_labels.get(d.name, d.name) if case_labels else d.name
-        cases.append({
-            "label": label,
-            "res":   load_info0(p0),
-            "flux":  load_info1(p1),
-        })
-
-    if not cases:
-        print("No valid cases found.")
-        return
-
-    cmap = cm.get_cmap("cividis", len(cases))
-
-    # ── 1. Separate plot per case ────────────────────────────────────────────
-    for i, c in enumerate(cases):
-        fig, axes = plt.subplots(2, 1, figsize=(8, 8), sharex=False)
-        color = cmap(i)
-
-        # Residuals
-        ax = axes[0]
-        ax.semilogy(c["res"]["iter"], c["res"]["L2_rho"],  color=color,          lw=2, label=r"L2($\rho$)")
-        ax.semilogy(c["res"]["iter"], c["res"]["L2_rhou"], color=color, ls="--", lw=2, label=r"L2($\rho u$)")
-        ax.semilogy(c["res"]["iter"], c["res"]["L2_rhoe"], color=color, ls=":",  lw=2, label=r"L2($\rho e$)")
-        ax.set_ylabel("L2 Residual")
-        ax.set_title(f"Residuals — {c['label']}", fontsize=14)
-        ax.legend(frameon=False)
-        ax.grid(True, which="both", alpha=0.3)
-        ax.tick_params(labelsize=12)
-
-        # Mass flux
-        ax = axes[1]
-        inlet_ref = c["flux"]["outlet_mflux"][0]
-        ax.plot(c["flux"]["iter"], c["flux"]["outlet_mflux"], color=color, lw=2, label="|ṁ| outlet")
-        ax.axhline(inlet_ref, color="gray", ls=":", lw=1.5, label=f"Inlet ref = {inlet_ref:.3f}")
-        ax.set_xlabel("Iteration")
-        ax.set_ylabel("|ṁ| [kg/s]")
-        ax.set_title(f"Mass Flux Convergence — {c['label']}", fontsize=14)
-        ax.legend(frameon=False)
-        ax.grid(True, which="both", alpha=0.3)
-        ax.tick_params(labelsize=12)
-
-        plt.tight_layout()
-
-        if save:
-            dirc = Path(r"C:\Users\hhsabbah\Documents\01_Bladeless_Proj\35_Git\Supersonic-Bladeless-Turbine\SBTTD\reports\figures\Convergence")
-            dirc.mkdir(parents=True, exist_ok=True)
-            plt.savefig(dirc / f"convergence_{c['label']}.png", dpi=600, bbox_inches="tight")
-            plt.savefig(dirc / f"convergence_{c['label']}.pdf", bbox_inches="tight")
-
-        plt.show()
-
-    # ── 2. Combined plot — all cases together ────────────────────────────────
-    fig, axes = plt.subplots(2, 1, figsize=(10, 8), sharex=False)
-
-    for i, c in enumerate(cases):
-        color = cmap(i)
-        lbl   = c["label"]
-        axes[0].semilogy(c["res"]["iter"],  c["res"]["L2_rho"],          color=color, lw=2, label=f"{lbl} — L2(ρ)")
-        axes[0].semilogy(c["res"]["iter"],  c["res"]["L2_rhou"], ls="--", color=color, lw=2)
-        axes[0].semilogy(c["res"]["iter"],  c["res"]["L2_rhoe"], ls=":",  color=color, lw=2)
-        axes[1].plot(c["flux"]["iter"], c["flux"]["outlet_mflux"],        color=color, lw=2, label=lbl)
-
-    axes[0].set_ylabel("L2 Residual");     axes[0].set_title("Residuals — All Cases", fontsize=14)
-    axes[1].set_ylabel("|ṁ| [kg/s]");     axes[1].set_title("Mass Flux — All Cases", fontsize=14)
-    axes[1].set_xlabel("Iteration")
-
-    for ax in axes:
-        ax.legend(frameon=False)
-        ax.grid(True, which="both", alpha=0.3)
-        ax.tick_params(labelsize=12)
-
-    plt.tight_layout()
-
-    if save:
-        plt.savefig(dirc / "convergence_combined.png", dpi=600, bbox_inches="tight")
-        plt.savefig(dirc / "convergence_combined.pdf", bbox_inches="tight")
-
-    plt.show()
-
-
-def load_mcfd_net_mass_flux(root_dir, inlet_selector=1, outlet_selector=2):
-    """
-    Parse mcfd.info1 and compute net mass flux per iteration.
-    
-    Net mass flux = (ṁ_outlet + ṁ_inlet) / A_outlet
-    Approaches 0 as simulation converges.
-
-    Returns
-    -------
-    iter_dict : dict  {case_name: iterations array}
-    flux_dict : dict  {case_name: net mass flux array [kg/m²·s]}
-    """
-    root_dir = Path(root_dir)
-    iter_dict, flux_dict = {}, {}
-
-    for info1_path in sorted(root_dir.rglob("mcfd.info1")):
-        case_name = info1_path.parent.name
-        iters, net_fluxes = [], []
-
-        current_iter = None
-        current_sel  = None
-        in_nondim    = False
-        sel_flow     = {}   # selector -> mass flow [kg/s]
-        sel_area     = {}   # selector -> area [m²]
-
-        with open(info1_path) as f:
-            for line in f:
-                line = line.rstrip()
-
-                m = re.match(r'^nt\s+(\d+)', line)
-                if m:
-                    if current_iter is not None:
-                        ṁ_in  = sel_flow.get(inlet_selector,  np.nan)
-                        ṁ_out = sel_flow.get(outlet_selector, np.nan)
-                        A_out = sel_area.get(outlet_selector, np.nan)
-                        iters.append(current_iter)
-                        net_fluxes.append((ṁ_out + ṁ_in) / A_out)
-                    current_iter = int(m.group(1))
-                    sel_flow, sel_area = {}, {}
-                    current_sel, in_nondim = None, False
-                    continue
-
-                m = re.match(r'^For selector\s+(\d+)', line)
-                if m:
-                    current_sel = int(m.group(1))
-                    in_nondim   = False
-                    continue
-
-                if 'nondimensional' in line:
-                    in_nondim = True
-                    continue
-                if 'dimensional' in line and 'non' not in line:
-                    in_nondim = False
-                    continue
-
-                if in_nondim and current_sel is not None:
-                    if 'mass   flux' in line and current_sel not in sel_flow:
-                        sel_flow[current_sel] = float(line.split()[2])
-                    if line.strip().startswith('areas') and current_sel not in sel_area:
-                        sel_area[current_sel] = abs(float(line.split()[-1]))
-
-        # flush last iteration
-        if current_iter is not None:
-            ṁ_in  = sel_flow.get(inlet_selector,  np.nan)
-            ṁ_out = sel_flow.get(outlet_selector, np.nan)
-            A_out = sel_area.get(outlet_selector, np.nan)
-            iters.append(current_iter)
-            net_fluxes.append((ṁ_out + ṁ_in) / A_out)
-
-        iter_dict[case_name] = np.array(iters)
-        flux_dict[case_name] = np.array(net_fluxes)
-
-    return iter_dict, flux_dict
-
-
 
 
 #### Plotting cases # 
@@ -1153,7 +879,7 @@ iter_dict, flux_dict = load_mcfd_net_mass_flux(root)
 
 # Separate plot per h/l case
 subplotter_multiPerCase(iter_dict, flux_dict,
-                        x_string="Iteration", y_string="Net Mass Flux",
+                        x_string="Iteration", y_string="Mass Flux",
                         unit_x="[-]", unit_y=r"[kg/m²·s]",
                         filter_param="h_l",
                         filter_values=["0.02", "0.04", "0.06","0.08"],  # your h/l values
@@ -1192,11 +918,10 @@ subplotter_multiPerCase(iter_dict, flux_dict,
 """
 
 
-
-
-
 # === Separation/Attachment from sign of Tau_x (no splines), ignoring edge pairs ===
 sep_length, sep_length_nonDim, x_sep, y_sep, x_attach, y_attach = find_sepLength(ds_by_case,x,tau_wall)
+
+
 
 
 #%% 
@@ -1274,318 +999,8 @@ mach = mach_vs_sepLength(ds_by_case, x, y, sep_length_nonDim)
 
 
 
-
-
-
-
-
-#%% GPT: Getting the first point at which separation occurs.
-
-
- 
-import re
-import numpy as np
-import matplotlib.pyplot as plt
-import matplotlib.cm as cm
-def extract_mach_from_filename(s, mach_levels):
-    """Extract Mach number from key string, handling multiple formats."""
-    s_lower = s.lower()  # Case-insensitive matching
-    
-    for mv in mach_levels:
-        # Format variations to check:
-        # "mach_2.5", "mach_2_5", "mach 2.5", "mach2.5"
-        patterns = [
-            f"mach_{mv:.1f}",           # mach_2.5
-            f"mach_{mv:.1f}".replace(".", "_"),  # mach_2_5
-            f"mach {mv:.1f}",           # mach 2.5 (your format)
-            f"mach{mv:.1f}",            # mach2.5
-        ]
-
-        
-        for pat in patterns:
-            if pat in s_lower:
-                return float(mv)
-    
-    return np.nan
-# Define Mach levels and colormap
-
-
-# --- your helper kept as-is ---
-def y_at_x_on_polyline(x, y, x_star):
-    x = np.asarray(x).ravel()
-    y = np.asarray(y).ravel()
-    good = np.isfinite(x) & np.isfinite(y)
-    x, y = x[good], y[good]
-    xdiff = x - x_star
-    seg_idx = np.where((xdiff[:-1] * xdiff[1:]) <= 0)[0]
-    if seg_idx.size:
-        k = seg_idx
-        x0, x1 = x[k], x[k+1]
-        y0, y1 = y[k], y[k+1]
-        vertical = (x1 == x0)
-        out = np.empty(k.size, float)
-        if np.any(~vertical):
-            t = (x_star - x0[~vertical]) / (x1[~vertical] - x0[~vertical])
-            out[~vertical] = y0[~vertical] + t * (y1[~vertical] - y0[~vertical])
-        if np.any(vertical):
-            out[vertical] = 0.5*(y0[vertical] + y1[vertical])
-        seg_dist = np.minimum(np.abs(xdiff[k]), np.abs(xdiff[k+1]))
-        return out[np.argmin(seg_dist)]
-    j = int(np.argmin(np.abs(xdiff)))
-    return y[j]
-
-# ---- inputs ----
-temp_keys = cases_by_hl["h_l_0.09"]
-
-
-
-# Track which legend labels we’ve already used
-seen_sep   = set()   # Mach values that had a separation point plotted
-seen_nosep = set()   # Mach values that had no separation in the window
-
-plt.figure()
-for i, temp_key in enumerate(temp_keys):
-    # parse Pressure values (for legend & dedupe)
-    m = re.search(r"Mach_([0-9]*\.?[0-9]+)", temp_key)
-    mach_string = m.group(1) if m else "?"
-    mach_val = float(mach_string) if m else np.nan
-
-    # separation x-locations and window bounds (same units!)
-    xsep = np.asarray(x_sep[temp_key]).ravel()
-    xmax = np.asarray(x_max[temp_key]).ravel()
-
-    # geometry curve
-    x_temp = np.asarray(ds_by_case[temp_key]["X"].data)
-    y_temp = np.asarray(ds_by_case[temp_key]["Y"].data)
-    x_temp_in = x_temp
-    y_temp_in = y_temp
-
-    # plot the geometry once per case (fine if repeated)
-    plt.plot(x_temp_in, y_temp_in, color="red", linewidth=3.0)
-
-    # window mask: between the first two maxima
-    if xmax.size >= 2:
-        lo, hi = np.sort(xmax[:2])
-        mask_new = np.isfinite(xsep) & (xsep > lo) & (xsep < hi)
-        x_sep_filtered = xsep[mask_new]
-    else:
-        x_sep_filtered = np.array([], dtype=float)
-
-    Re_temp = Re[temp_key]
-
-    if x_sep_filtered.size:
-        # Take leftmost separation in the window
-        firstSepPointX = float(np.min(x_sep_filtered))
-        firstSepPointY = y_at_x_on_polyline(x_temp_in, y_temp_in, firstSepPointX)
-
-        # Label each Mach ONCE for "sep" cases
-        label = f"M = {mach_string}"
-        if mach_val in seen_sep:
-            label = "_nolegend_"
-        else:
-            seen_sep.add(mach_val)
-
-        plt.scatter(firstSepPointX, firstSepPointY,
-                    label=label, zorder=5, color=cmap(i), edgecolor="k", linewidths=0.3)
-    else:
-        # Optional: mark mid-window with a small x so reader sees "no sep" region
-        if xmax.size >= 2:
-            midx = 0.5*(lo + hi)
-            midy = y_at_x_on_polyline(x_temp, y_temp, midx)
-            plt.scatter([midx], [midy], marker="x", color="0.6", zorder=4, s=30)
-
-        # Add ONE legend entry per Mach for "(no sep)"
-        label = f"M = {mach_string} (no sep)"
-        if mach_val in seen_nosep:
-            label = "_nolegend_"
-        else:
-            seen_nosep.add(mach_val)
-
-        # create a legend handle without adding a visible extra point:
-        plt.scatter([], [], color=cmap(i), label=label)
-
-plt.xlabel("X [m]", fontsize = 18)
-plt.ylabel("Y [m]", fontsize = 18)
-plt.title(r"First Separation Point: $h_{L}$ = 0.09",fontsize = 21)
-plt.legend(loc="center left", bbox_to_anchor=(1.05, 0.5), borderaxespad=0.)
-plt.grid(True)
-plt.tight_layout()
-plt.show()
-
-
- #%% First point separation but for all h/ls in one SUBPLOT! ####################
-
-
-"""
-#------------------------------------------------------------------------------------------------------------------------------------#
-                         Plotting the location of the first separation sensitivity in a subplot for all h/ls
-#------------------------------------------------------------------------------------------------------------------------------------#
-"""
-import re
-import numpy as np
-import matplotlib.pyplot as plt
-import matplotlib.cm as cm
-from matplotlib.lines import Line2D
-# --- your helper kept as-is ---
-def y_at_x_on_polyline(x, y, x_star):
-    x = np.asarray(x).ravel()
-    y = np.asarray(y).ravel()
-    good = np.isfinite(x) & np.isfinite(y)
-    x, y = x[good], y[good]
-    xdiff = x - x_star
-    seg_idx = np.where((xdiff[:-1] * xdiff[1:]) <= 0)[0]
-    if seg_idx.size:
-        k = seg_idx
-        x0, x1 = x[k], x[k+1]
-        y0, y1 = y[k], y[k+1]
-        vertical = (x1 == x0)
-        out = np.empty(k.size, float)
-        if np.any(~vertical):
-            t = (x_star - x0[~vertical]) / (x1[~vertical] - x0[~vertical])
-            out[~vertical] = y0[~vertical] + t * (y1[~vertical] - y0[~vertical])
-        if np.any(vertical):
-            out[vertical] = 0.5*(y0[vertical] + y1[vertical])
-        seg_dist = np.minimum(np.abs(xdiff[k]), np.abs(xdiff[k+1]))
-        return out[np.argmin(seg_dist)]
-    j = int(np.argmin(np.abs(xdiff)))
-    return y[j]
-
-# ---- inputs ----
-h_l_values = [0.02, 0.03, 0.04, 0.05, 0.06, 0.07, 0.08, 0.09]
-
-# Create subplot grid (2 rows x 4 columns for 8 h/l values)
-fig, axes = plt.subplots(2, 4, figsize=(28, 14))
-axes = axes.flatten()  # Flatten to 1D array for easy indexing
-
-# Create a shared colormap for Mach numbers across all subplots
-# Adjust the number based on how many Mach cases you have
-n_mach_cases = 9  # Adjust this to match your data
-cmap = cm.get_cmap("Spectral", 6)
-
-for idx, h_l in enumerate(h_l_values):
-    ax = axes[idx]
-    
-    # Get the key for this h/l value
-    h_l_key = f"h_l_{h_l:.2f}"
-    temp_keys = cases_by_hl[h_l_key]
-    
- 
-    
-    # Track which legend labels we've already used (reset for each subplot)
-    seen_sep = set()
-    seen_nosep = set()
-    
-    for i, temp_key in enumerate(temp_keys):
-        # Parse Mach values (for legend & dedupe)
-        m = re.search(r"Mach_([0-9]*\.?[0-9]+)", temp_key)
-        mach_string = m.group(1) if m else "?"
-        mach_val = float(mach_string) if m else np.nan
-        
-        # Separation x-locations and window bounds
-        xsep = np.asarray(x_sep[temp_key]).ravel()
-        xmax = np.asarray(x_max[temp_key]).ravel()
-        
-        # alpha list # 
-        alpha_list = np.linspace(0.8,0.3,len(temp_key))
-        
-        
-        # Geometry curve
-        min_l = 0.0
-        max_l = 0.1
-        
-        jitter_strength = 0.1
-        
-        x_temp = np.asarray(ds_by_case[temp_key]["X"].data)
-        y_temp = np.asarray(ds_by_case[temp_key]["Y"].data)
-        
-        # Creating an alpha list to make the scatter plot more clear #
-        
-        
-        mask = (x_temp < max_l) & (x_temp > min_l)
-        x_temp_in = x_temp[mask]
-        y_temp_in = y_temp[mask]
-        
-        # Plot the geometry once per case
-        ax.plot(x_temp_in, y_temp_in, color="blue", linewidth= 4.0)
-        
-        # Window mask: between the first two maxima
-        if xmax.size >= 2:
-            lo, hi = np.sort(xmax[:2])
-            mask_new = np.isfinite(xsep) & (xsep > lo) & (xsep < hi)
-            x_sep_filtered = xsep[mask_new]
-        else:
-            x_sep_filtered = np.array([], dtype=float)
-        
-        Re_temp = Re[temp_key]
-        
-        if x_sep_filtered.size:
-            # Take leftmost separation in the window
-            firstSepPointX = float(np.min(x_sep_filtered))
-            firstSepPointY = y_at_x_on_polyline(x_temp_in, y_temp_in, firstSepPointX)
-            
-            # Label each Mach ONCE for "sep" cases
-            label = f"{mach_string}"
-            if mach_val in seen_sep:
-                label = "_nolegend_"
-            else:
-                seen_sep.add(mach_val)
-            
-            ax.scatter(firstSepPointX, firstSepPointY,
-                       label=label, zorder=5, color=cmap(i), 
-                       edgecolor="k", linewidths=1, s=650, alpha = alpha_list[i])
-        else:
-            # Mark mid-window with a small x for "no sep" region
-            if xmax.size >= 2:
-                midx = 0.5 * (lo + hi)
-                midy = y_at_x_on_polyline(x_temp, y_temp, midx)
-                ax.scatter([midx], [midy], marker="x", color="0.3", zorder=4, s=600)
-            
-            # Add ONE legend entry per Mach for "(no sep)"
-            label = f"M = {mach_string} (no sep)"
-            if mach_val in seen_nosep:
-                label = "_nolegend_"
-            else:
-                seen_nosep.add(mach_val)
-            
-            ax.scatter([], [], color=cmap(i), label=label)
-    
-    # Subplot formatting
-    ax.set_title(f"h/l = {h_l:.2f}", fontsize=48, fontweight='bold')
-    ax.set_xlabel("X [m]", fontsize=34)
-    ax.set_ylabel("Y [m]", fontsize=34)
-    ax.tick_params(labelsize=34)
-    ax.grid(True)
-
-
-# Add a single shared legend outside the subplots
-# Collect handles and labels from the last subplot (or any subplot)
-handles, labels = axes[-1].get_legend_handles_labels()
-
-# Add a custom handle for the "x" marker (no separation cases)
-no_sep_handle = Line2D([0], [0], marker='x', color='0.3', linestyle='', 
-                       markersize=15, markeredgewidth=2, label='No separation')
-handles.append(no_sep_handle)
-labels.append('No separation')
-
-
-# Add a single shared legend outside the subplots
-# Collect handles and labels from the last subplot (or any subplot)
-#handles, labels = axes[-1].get_legend_handles_labels()
-fig.legend(handles, labels, loc='center right', bbox_to_anchor=(1.10, 0.5), 
-           fontsize=38, title="Mach Number", title_fontsize = 48)
-
-# Main title for the entire figure
-fig.suptitle("First Separation Point vs h/l", fontsize=58, fontweight='bold', y=1.02)
-
-plt.tight_layout()
-plt.subplots_adjust(right=0.88)  # Make room for the legend on the right
-plt.savefig('separation_points_subplots.png', dpi=150, bbox_inches='tight')
-plt.show()
-
   
-
-#%% Improved case
-
+#%%
 
 """
 #------------------------------------------------------------------------------------------------------------------------------------#
@@ -2476,15 +1891,6 @@ generate_axial_force_plot_dual_mach(
 
 
 
-
-
-
-
-
-
-
-
-
         
 #%%
 
@@ -2571,6 +1977,28 @@ for key,_ in P_inlet.items():
 
 
 
+#%% 
+"""
+#------------------------------------------------------------------------------------------------------------------------------------#
+                                                    2D cross-section to 3D conversion 
+#------------------------------------------------------------------------------------------------------------------------------------#
+"""
+
+
+# Converting 2D to 3D #
+h_l = 0.02 
+N   = 1
+l   = 0.1
+
+h = l * h_l;
+x_2DGeom = np.linspace(0, l, 1000)
+lambda_var = l / (2*N+1) * 2;
+y_2DGeom = h * np.sin(2*np.pi*x_2DGeom/lambda_var)
+
+
+plt.plot(x_2DGeom,y_2DGeom)
+plt.grid()
+plt.show()
 
 
 

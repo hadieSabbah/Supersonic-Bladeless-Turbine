@@ -342,6 +342,7 @@ def plot_BL_thickness(delta_n_dict, x_start_dict, save=False,
 
 def subplotter_multiPerCase(x_dict, y_dict, x_string, y_string, unit_x, unit_y,
                             filter_param, filter_values, vary_param='mach',
+                            hl_filter=None,
                             cmap_name='cividis', figsize=None, save=False, 
                             overall_title=None):
     """
@@ -351,6 +352,10 @@ def subplotter_multiPerCase(x_dict, y_dict, x_string, y_string, unit_x, unit_y,
     ----------
     filter_values : list
         List of values to filter by (one subplot per value)
+    hl_filter : list or None
+        Optional list of h/l values to include as subplots.
+        e.g. hl_filter=[0.02, 0.05, 0.10] shows only those h/l subplots.
+        If None, all values in filter_values are plotted.
     """
     
     # Set publication-quality parameters
@@ -365,6 +370,11 @@ def subplotter_multiPerCase(x_dict, y_dict, x_string, y_string, unit_x, unit_y,
     mpl.rcParams['lines.linewidth'] = 3
     mpl.rcParams['figure.dpi'] = 150
     mpl.rcParams['savefig.dpi'] = 600
+
+    # Apply optional h/l filter to select which subplots to show
+    if hl_filter is not None:
+        hl_filter_float = [float(v) for v in hl_filter]
+        filter_values = [v for v in filter_values if float(v) in hl_filter_float]
     
     # Determine subplot grid
     n_plots = len(filter_values)
@@ -380,7 +390,7 @@ def subplotter_multiPerCase(x_dict, y_dict, x_string, y_string, unit_x, unit_y,
     for idx, filter_value in enumerate(filter_values):
         ax = axes_flat[idx]
         
-        # Filter cases
+        # Filter cases by filter_param
         filtered_keys = []
         for key in x_dict.keys():
             if filter_param == 'h_l':
@@ -393,7 +403,7 @@ def subplotter_multiPerCase(x_dict, y_dict, x_string, y_string, unit_x, unit_y,
                     filtered_keys.append(key)
         
         filtered_keys.sort()
-        
+
         if not filtered_keys:
             ax.set_visible(False)
             continue
@@ -421,11 +431,9 @@ def subplotter_multiPerCase(x_dict, y_dict, x_string, y_string, unit_x, unit_y,
         else:
             title = f"{filter_param} = {filter_value}"
         
-        ax.set_title(title, fontsize = 34)
-
+        ax.set_title(title, fontsize=34)
         ax.set_xlabel(f"{x_string} {unit_x}")
         ax.set_ylabel(f"{y_string} {unit_y}")
-        #ax.legend(frameon=False)
         ax.grid(True, alpha=0.3)
     
     # Hide extra subplots
@@ -434,7 +442,18 @@ def subplotter_multiPerCase(x_dict, y_dict, x_string, y_string, unit_x, unit_y,
     
     if overall_title:
         fig.suptitle(overall_title, fontsize=34)
-    
+
+    # Single figure-level legend on the right, taken from the first visible subplot
+    first_ax = next(ax for ax in axes_flat if ax.get_visible())
+    handles, labels = first_ax.get_legend_handles_labels()
+    fig.legend(handles, labels,
+               loc='center left',
+               bbox_to_anchor=(1.01, 0.5),
+               frameon=False,
+               fontsize=18,
+               title='Mach Number' if vary_param == 'mach' else 'h/l',
+               title_fontsize=18)
+
     plt.tight_layout()
     plt.show()
     
@@ -1316,6 +1335,428 @@ def mass_flux_imbalance_analyzer(root_dir=None, file_name_total="minfo1_e1",
         print(f"\nResults saved to {csv_filename}")
     
     return results, common_cases
+
+import re
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+
+def load_mcfd_info1(root_dir, outlet_selector=2):
+    """
+    Parse iCFD++ mcfd.info1 boundary flux files across multiple case folders.
+    Returns dicts compatible with plotter_multi_all() and subplotter_multiPerCase().
+
+    Parameters
+    ----------
+    root_dir : str or Path
+        Root directory containing case subfolders, each with mcfd.info1
+    outlet_selector : int
+        Selector number for the outlet boundary (default: 2)
+
+    Returns
+    -------
+    iter_dict : dict
+        {case_name: np.array of iteration numbers}
+    flux_dict : dict
+        {case_name: np.array of outlet mass flux values}
+    """
+    root_dir = Path(root_dir)
+    case_dirs = sorted([p for p in root_dir.rglob("mcfd.info1")])
+
+    iter_dict = {}
+    flux_dict = {}
+
+    for info1_path in case_dirs:
+        case_name = info1_path.parent.name
+        iters, fluxes = [], []
+        current_iter = None
+        current_sel  = None
+        in_nondim    = False
+        sel_flux     = {}
+
+        with open(info1_path) as f:
+            for line in f:
+                line = line.rstrip()
+
+                m = re.match(r'^nt\s+(\d+)', line)
+                if m:
+                    if current_iter is not None:
+                        iters.append(current_iter)
+                        fluxes.append(sel_flux.get(outlet_selector, np.nan))
+                    current_iter = int(m.group(1))
+                    sel_flux, current_sel, in_nondim = {}, None, False
+                    continue
+
+                m = re.match(r'^For selector\s+(\d+)', line)
+                if m:
+                    current_sel = int(m.group(1))
+                    in_nondim   = False
+                    continue
+
+                if 'nondimensional' in line:
+                    in_nondim = True
+                    continue
+                if 'dimensional' in line and 'non' not in line:
+                    in_nondim = False
+                    continue
+
+                if in_nondim and current_sel is not None and 'mass   flux' in line:
+                    if current_sel not in sel_flux:   # first = nondim total
+                        sel_flux[current_sel] = float(line.split()[2])
+
+        # flush last iteration
+        if current_iter is not None:
+            iters.append(current_iter)
+            fluxes.append(sel_flux.get(outlet_selector, np.nan))
+
+        iter_dict[case_name] = np.array(iters)
+        flux_dict[case_name] = np.abs(np.array(fluxes))
+
+    return iter_dict, flux_dict
+
+def load_info0(path):
+    """
+    Parse iCFD++ mcfd.info0 residual file.
+    Columns: iter | dt | L2(rho) | L2(rhou) | L2(rhoe) | CFL | tau | misc
+    Returns dict of numpy arrays.
+    """
+    data = np.loadtxt(path)
+    return {
+        "iter":    data[:, 0],
+        "L2_rho":  data[:, 2],
+        "L2_rhou": data[:, 3],
+        "L2_rhoe": data[:, 4],
+        "tau":     data[:, 6],
+    }
+
+
+def load_info1(path, outlet_selector=2):
+    """
+    Parse iCFD++ mcfd.info1 boundary flux file.
+    Extracts outlet mass flux (nondimensional) per iteration.
+    
+    Selector 1 = inlet (fixed BC), 2 = outlet (tracks convergence), 3 = wall (~0)
+    """
+    iters, outlet_flux = [], []
+    current_iter  = None
+    current_sel   = None
+    in_nondim     = False
+    sel_flux      = {}
+
+    with open(path) as f:
+        for line in f:
+            line = line.rstrip()
+
+            m = re.match(r'^nt\s+(\d+)', line)
+            if m:
+                if current_iter is not None:
+                    iters.append(current_iter)
+                    outlet_flux.append(sel_flux.get(outlet_selector, np.nan))
+                current_iter = int(m.group(1))
+                sel_flux, current_sel, in_nondim = {}, None, False
+                continue
+
+            m = re.match(r'^For selector\s+(\d+)', line)
+            if m:
+                current_sel = int(m.group(1))
+                in_nondim   = False
+                continue
+
+            if 'nondimensional' in line:
+                in_nondim = True;  continue
+            if 'dimensional' in line and 'non' not in line:
+                in_nondim = False; continue
+
+            if in_nondim and current_sel is not None and 'mass   flux' in line:
+                if current_sel not in sel_flux:          # first = nondim total
+                    sel_flux[current_sel] = float(line.split()[2])
+
+    if current_iter is not None:                         # flush last iteration
+        iters.append(current_iter)
+        outlet_flux.append(sel_flux.get(outlet_selector, np.nan))
+
+    return {
+        "iter":         np.array(iters),
+        "outlet_mflux": np.abs(np.array(outlet_flux)),
+    }
+
+
+def icfd_convergence_plotter(root_dir, case_labels=None, save=False):
+    """
+    Plot iCFD++ convergence (residuals + mass flux) for all cases under root_dir.
+    Mirrors the style of residual_plotter() and mass_flux_analyzer().
+
+    Expects structure:
+        root_dir/
+            case_A/   <- contains mcfd.info0 and mcfd.info1
+            case_B/
+            ...
+
+    Parameters
+    ----------
+    root_dir   : str or Path
+    case_labels: dict, optional  {folder_name: display_label}
+    save       : bool
+    """
+    root_dir  = Path(root_dir)
+    case_dirs = sorted([p for p in root_dir.iterdir() if p.is_dir()])
+
+    if not case_dirs:
+        print("No subdirectories found.")
+        return
+
+    # ── collect all data first ──────────────────────────────────────────────
+    cases = []
+    for d in case_dirs:
+        p0 = d / "mcfd.info0"
+        p1 = d / "mcfd.info1"
+        if not p0.exists() or not p1.exists():
+            print(f"Skipping {d.name}: missing info0 or info1")
+            continue
+        label = case_labels.get(d.name, d.name) if case_labels else d.name
+        cases.append({
+            "label": label,
+            "res":   load_info0(p0),
+            "flux":  load_info1(p1),
+        })
+
+    if not cases:
+        print("No valid cases found.")
+        return
+
+    cmap = cm.get_cmap("cividis", len(cases))
+
+    # ── 1. Separate plot per case ────────────────────────────────────────────
+    for i, c in enumerate(cases):
+        fig, axes = plt.subplots(2, 1, figsize=(8, 8), sharex=False)
+        color = cmap(i)
+
+        # Residuals
+        ax = axes[0]
+        ax.semilogy(c["res"]["iter"], c["res"]["L2_rho"],  color=color,          lw=2, label=r"L2($\rho$)")
+        ax.semilogy(c["res"]["iter"], c["res"]["L2_rhou"], color=color, ls="--", lw=2, label=r"L2($\rho u$)")
+        ax.semilogy(c["res"]["iter"], c["res"]["L2_rhoe"], color=color, ls=":",  lw=2, label=r"L2($\rho e$)")
+        ax.set_ylabel("L2 Residual")
+        ax.set_title(f"Residuals — {c['label']}", fontsize=14)
+        ax.legend(frameon=False)
+        ax.grid(True, which="both", alpha=0.3)
+        ax.tick_params(labelsize=12)
+
+        # Mass flux
+        ax = axes[1]
+        inlet_ref = c["flux"]["outlet_mflux"][0]
+        ax.plot(c["flux"]["iter"], c["flux"]["outlet_mflux"], color=color, lw=2, label="|ṁ| outlet")
+        ax.axhline(inlet_ref, color="gray", ls=":", lw=1.5, label=f"Inlet ref = {inlet_ref:.3f}")
+        ax.set_xlabel("Iteration")
+        ax.set_ylabel("|ṁ| [kg/s]")
+        ax.set_title(f"Mass Flux Convergence — {c['label']}", fontsize=14)
+        ax.legend(frameon=False)
+        ax.grid(True, which="both", alpha=0.3)
+        ax.tick_params(labelsize=12)
+
+        plt.tight_layout()
+
+        if save:
+            dirc = Path(r"C:\Users\hhsabbah\Documents\01_Bladeless_Proj\35_Git\Supersonic-Bladeless-Turbine\SBTTD\reports\figures\Convergence")
+            dirc.mkdir(parents=True, exist_ok=True)
+            plt.savefig(dirc / f"convergence_{c['label']}.png", dpi=600, bbox_inches="tight")
+            plt.savefig(dirc / f"convergence_{c['label']}.pdf", bbox_inches="tight")
+
+        plt.show()
+
+    # ── 2. Combined plot — all cases together ────────────────────────────────
+    fig, axes = plt.subplots(2, 1, figsize=(10, 8), sharex=False)
+
+    for i, c in enumerate(cases):
+        color = cmap(i)
+        lbl   = c["label"]
+        axes[0].semilogy(c["res"]["iter"],  c["res"]["L2_rho"],          color=color, lw=2, label=f"{lbl} — L2(ρ)")
+        axes[0].semilogy(c["res"]["iter"],  c["res"]["L2_rhou"], ls="--", color=color, lw=2)
+        axes[0].semilogy(c["res"]["iter"],  c["res"]["L2_rhoe"], ls=":",  color=color, lw=2)
+        axes[1].plot(c["flux"]["iter"], c["flux"]["outlet_mflux"],        color=color, lw=2, label=lbl)
+
+    axes[0].set_ylabel("L2 Residual");     axes[0].set_title("Residuals — All Cases", fontsize=14)
+    axes[1].set_ylabel("|ṁ| [kg/s]");     axes[1].set_title("Mass Flux — All Cases", fontsize=14)
+    axes[1].set_xlabel("Iteration")
+
+    for ax in axes:
+        ax.legend(frameon=False)
+        ax.grid(True, which="both", alpha=0.3)
+        ax.tick_params(labelsize=12)
+
+    plt.tight_layout()
+
+    if save:
+        plt.savefig(dirc / "convergence_combined.png", dpi=600, bbox_inches="tight")
+        plt.savefig(dirc / "convergence_combined.pdf", bbox_inches="tight")
+
+    plt.show()
+
+
+def load_mcfd_net_mass_flux(root_dir, inlet_selector=1, outlet_selector=2):
+    """
+    Parse mcfd.info1 and compute net mass flux per iteration.
+    
+    Net mass flux = (ṁ_outlet + ṁ_inlet) / A_outlet
+    Approaches 0 as simulation converges.
+
+    Returns
+    -------
+    iter_dict : dict  {case_name: iterations array}
+    flux_dict : dict  {case_name: net mass flux array [kg/m²·s]}
+    """
+    root_dir = Path(root_dir)
+    iter_dict, flux_dict = {}, {}
+
+    for info1_path in sorted(root_dir.rglob("mcfd.info1")):
+        case_name = info1_path.parent.name
+        iters, net_fluxes = [], []
+
+        current_iter = None
+        current_sel  = None
+        in_nondim    = False
+        sel_flow     = {}   # selector -> mass flow [kg/s]
+        sel_area     = {}   # selector -> area [m²]
+
+        with open(info1_path) as f:
+            for line in f:
+                line = line.rstrip()
+
+                m = re.match(r'^nt\s+(\d+)', line)
+                if m:
+                    if current_iter is not None:
+                        ṁ_in  = sel_flow.get(inlet_selector,  np.nan)
+                        ṁ_out = sel_flow.get(outlet_selector, np.nan)
+                        A_out = sel_area.get(outlet_selector, np.nan)
+                        iters.append(current_iter)
+                        net_fluxes.append((ṁ_out + ṁ_in) / A_out)
+                    current_iter = int(m.group(1))
+                    sel_flow, sel_area = {}, {}
+                    current_sel, in_nondim = None, False
+                    continue
+
+                m = re.match(r'^For selector\s+(\d+)', line)
+                if m:
+                    current_sel = int(m.group(1))
+                    in_nondim   = False
+                    continue
+
+                if 'nondimensional' in line:
+                    in_nondim = True
+                    continue
+                if 'dimensional' in line and 'non' not in line:
+                    in_nondim = False
+                    continue
+
+                if in_nondim and current_sel is not None:
+                    if 'mass   flux' in line and current_sel not in sel_flow:
+                        sel_flow[current_sel] = float(line.split()[2])
+                    if line.strip().startswith('areas') and current_sel not in sel_area:
+                        sel_area[current_sel] = abs(float(line.split()[-1]))
+
+        # flush last iteration
+        if current_iter is not None:
+            ṁ_in  = sel_flow.get(inlet_selector,  np.nan)
+            ṁ_out = sel_flow.get(outlet_selector, np.nan)
+            A_out = sel_area.get(outlet_selector, np.nan)
+            iters.append(current_iter)
+            net_fluxes.append((ṁ_out + ṁ_in) / A_out)
+
+        iter_dict[case_name] = np.array(iters)
+        flux_dict[case_name] = np.array(net_fluxes)
+
+    return iter_dict, flux_dict
+
+
+
+
+
+
+def export_mach_contours(
+    study_dir,
+    png_dest,
+    layout_dest,
+    file_name="mcfd_tec.bin",
+    res_number=4096,
+):
+    """
+    Export Mach contour images for all cases in a parametric study using a Tecplot layout.
+
+    Parameters
+    ----------
+    study_dir   : str or Path
+        Root directory containing the CFD++ result files.
+    png_dest    : str or Path
+        Destination directory for the exported PNG contour images.
+    layout_dest : str or Path
+        Full path to the Tecplot layout file (e.g. machLayout.lay).
+    file_name   : str, optional
+        Name of the Tecplot binary file to load (default: 'mcfd_tec.bin').
+    res_number  : int, optional
+        Image resolution in pixels (default: 4096).
+    """
+    from tecplot.constant import ReadDataOption
+
+    study_dir   = Path(study_dir)
+    png_dest    = Path(png_dest)
+    layout_dest = Path(layout_dest)
+
+    # Recursively find all matching files under study_dir
+    file_paths = list(study_dir.rglob(file_name))
+
+    if not file_paths:
+        print(f"No '{file_name}' files found under {study_dir}")
+        return
+
+    # Connect to open Tecplot session
+    tp.session.connect()
+
+    for file_path in file_paths:
+        tp.new_layout()
+        tp.load_layout(layout_dest.as_posix())
+        tp.data.load_tecplot(
+            file_path.as_posix(),
+            read_data_option=ReadDataOption.Replace,
+            reset_style=False
+        )
+
+        # Get plot and dataset objects
+        frame   = tp.active_frame()
+        dataset = frame.dataset
+        plot    = frame.plot()
+
+        # Compute actual Mach data range across all zones
+        mach_var = dataset.variable('M')
+        mach_min = min(zone.values(mach_var).min() for zone in dataset.zones())
+        mach_max = max(zone.values(mach_var).max() for zone in dataset.zones())
+
+        # Reset contour levels to actual data range
+        plot.contour(0).levels.reset_levels(mach_min, mach_max, (mach_max - mach_min) / 10)
+
+        tp.macro.execute_command(f'''$!GlobalContour 1
+            ColorMapFilter
+            {{
+                ColorMapDistribution = Continuous
+                ContinuousColor
+                {{
+                    CMin = {mach_min}
+                    CMax = {mach_max}
+                }}
+            }}''')
+
+        plot.contour(0).levels.reset_to_nice(num_levels=10)
+
+        # Export PNG
+        out_path = png_dest / f"{file_path.parent.name}.png"
+        tp.export.save_png(out_path.as_posix(), res_number, supersample=3)
+        print(f"Saved: {out_path.name}")
+
+    print("\nExport complete!")
+    
+    
+    
+    
+
 
 
 def plot_mach_contours_per_hl(

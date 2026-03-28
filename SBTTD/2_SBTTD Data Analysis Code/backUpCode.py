@@ -694,3 +694,310 @@ ax1.grid(True, alpha=0.3)
 
 plt.grid()
 plt.show()
+
+
+
+#%% GPT: Getting the first point at which separation occurs.
+
+
+ 
+import re
+import numpy as np
+import matplotlib.pyplot as plt
+import matplotlib.cm as cm
+def extract_mach_from_filename(s, mach_levels):
+    """Extract Mach number from key string, handling multiple formats."""
+    s_lower = s.lower()  # Case-insensitive matching
+    
+    for mv in mach_levels:
+        # Format variations to check:
+        # "mach_2.5", "mach_2_5", "mach 2.5", "mach2.5"
+        patterns = [
+            f"mach_{mv:.1f}",           # mach_2.5
+            f"mach_{mv:.1f}".replace(".", "_"),  # mach_2_5
+            f"mach {mv:.1f}",           # mach 2.5 (your format)
+            f"mach{mv:.1f}",            # mach2.5
+        ]
+
+        
+        for pat in patterns:
+            if pat in s_lower:
+                return float(mv)
+    
+    return np.nan
+# Define Mach levels and colormap
+
+
+# --- your helper kept as-is ---
+def y_at_x_on_polyline(x, y, x_star):
+    x = np.asarray(x).ravel()
+    y = np.asarray(y).ravel()
+    good = np.isfinite(x) & np.isfinite(y)
+    x, y = x[good], y[good]
+    xdiff = x - x_star
+    seg_idx = np.where((xdiff[:-1] * xdiff[1:]) <= 0)[0]
+    if seg_idx.size:
+        k = seg_idx
+        x0, x1 = x[k], x[k+1]
+        y0, y1 = y[k], y[k+1]
+        vertical = (x1 == x0)
+        out = np.empty(k.size, float)
+        if np.any(~vertical):
+            t = (x_star - x0[~vertical]) / (x1[~vertical] - x0[~vertical])
+            out[~vertical] = y0[~vertical] + t * (y1[~vertical] - y0[~vertical])
+        if np.any(vertical):
+            out[vertical] = 0.5*(y0[vertical] + y1[vertical])
+        seg_dist = np.minimum(np.abs(xdiff[k]), np.abs(xdiff[k+1]))
+        return out[np.argmin(seg_dist)]
+    j = int(np.argmin(np.abs(xdiff)))
+    return y[j]
+
+# ---- inputs ----
+temp_keys = cases_by_hl["h_l_0.09"]
+
+
+
+# Track which legend labels we’ve already used
+seen_sep   = set()   # Mach values that had a separation point plotted
+seen_nosep = set()   # Mach values that had no separation in the window
+
+plt.figure()
+for i, temp_key in enumerate(temp_keys):
+    # parse Pressure values (for legend & dedupe)
+    m = re.search(r"Mach_([0-9]*\.?[0-9]+)", temp_key)
+    mach_string = m.group(1) if m else "?"
+    mach_val = float(mach_string) if m else np.nan
+
+    # separation x-locations and window bounds (same units!)
+    xsep = np.asarray(x_sep[temp_key]).ravel()
+    xmax = np.asarray(x_max[temp_key]).ravel()
+
+    # geometry curve
+    x_temp = np.asarray(ds_by_case[temp_key]["X"].data)
+    y_temp = np.asarray(ds_by_case[temp_key]["Y"].data)
+    x_temp_in = x_temp
+    y_temp_in = y_temp
+
+    # plot the geometry once per case (fine if repeated)
+    plt.plot(x_temp_in, y_temp_in, color="red", linewidth=3.0)
+
+    # window mask: between the first two maxima
+    if xmax.size >= 2:
+        lo, hi = np.sort(xmax[:2])
+        mask_new = np.isfinite(xsep) & (xsep > lo) & (xsep < hi)
+        x_sep_filtered = xsep[mask_new]
+    else:
+        x_sep_filtered = np.array([], dtype=float)
+
+    Re_temp = Re[temp_key]
+
+    if x_sep_filtered.size:
+        # Take leftmost separation in the window
+        firstSepPointX = float(np.min(x_sep_filtered))
+        firstSepPointY = y_at_x_on_polyline(x_temp_in, y_temp_in, firstSepPointX)
+
+        # Label each Mach ONCE for "sep" cases
+        label = f"M = {mach_string}"
+        if mach_val in seen_sep:
+            label = "_nolegend_"
+        else:
+            seen_sep.add(mach_val)
+
+        plt.scatter(firstSepPointX, firstSepPointY,
+                    label=label, zorder=5, color=cmap(i), edgecolor="k", linewidths=0.3)
+    else:
+        # Optional: mark mid-window with a small x so reader sees "no sep" region
+        if xmax.size >= 2:
+            midx = 0.5*(lo + hi)
+            midy = y_at_x_on_polyline(x_temp, y_temp, midx)
+            plt.scatter([midx], [midy], marker="x", color="0.6", zorder=4, s=30)
+
+        # Add ONE legend entry per Mach for "(no sep)"
+        label = f"M = {mach_string} (no sep)"
+        if mach_val in seen_nosep:
+            label = "_nolegend_"
+        else:
+            seen_nosep.add(mach_val)
+
+        # create a legend handle without adding a visible extra point:
+        plt.scatter([], [], color=cmap(i), label=label)
+
+plt.xlabel("X [m]", fontsize = 18)
+plt.ylabel("Y [m]", fontsize = 18)
+plt.title(r"First Separation Point: $h_{L}$ = 0.09",fontsize = 21)
+plt.legend(loc="center left", bbox_to_anchor=(1.05, 0.5), borderaxespad=0.)
+plt.grid(True)
+plt.tight_layout()
+plt.show()
+
+
+
+
+ #%% First point separation but for all h/ls in one SUBPLOT! ####################
+
+
+"""
+#------------------------------------------------------------------------------------------------------------------------------------#
+                         Plotting the location of the first separation sensitivity in a subplot for all h/ls
+#------------------------------------------------------------------------------------------------------------------------------------#
+"""
+import re
+import numpy as np
+import matplotlib.pyplot as plt
+import matplotlib.cm as cm
+from matplotlib.lines import Line2D
+# --- your helper kept as-is ---
+def y_at_x_on_polyline(x, y, x_star):
+    x = np.asarray(x).ravel()
+    y = np.asarray(y).ravel()
+    good = np.isfinite(x) & np.isfinite(y)
+    x, y = x[good], y[good]
+    xdiff = x - x_star
+    seg_idx = np.where((xdiff[:-1] * xdiff[1:]) <= 0)[0]
+    if seg_idx.size:
+        k = seg_idx
+        x0, x1 = x[k], x[k+1]
+        y0, y1 = y[k], y[k+1]
+        vertical = (x1 == x0)
+        out = np.empty(k.size, float)
+        if np.any(~vertical):
+            t = (x_star - x0[~vertical]) / (x1[~vertical] - x0[~vertical])
+            out[~vertical] = y0[~vertical] + t * (y1[~vertical] - y0[~vertical])
+        if np.any(vertical):
+            out[vertical] = 0.5*(y0[vertical] + y1[vertical])
+        seg_dist = np.minimum(np.abs(xdiff[k]), np.abs(xdiff[k+1]))
+        return out[np.argmin(seg_dist)]
+    j = int(np.argmin(np.abs(xdiff)))
+    return y[j]
+
+# ---- inputs ----
+h_l_values = [0.02, 0.03, 0.04, 0.05, 0.06, 0.07, 0.08, 0.09]
+
+# Create subplot grid (2 rows x 4 columns for 8 h/l values)
+fig, axes = plt.subplots(2, 4, figsize=(28, 14))
+axes = axes.flatten()  # Flatten to 1D array for easy indexing
+
+# Create a shared colormap for Mach numbers across all subplots
+# Adjust the number based on how many Mach cases you have
+n_mach_cases = 9  # Adjust this to match your data
+cmap = cm.get_cmap("Spectral", 6)
+
+for idx, h_l in enumerate(h_l_values):
+    ax = axes[idx]
+    
+    # Get the key for this h/l value
+    h_l_key = f"h_l_{h_l:.2f}"
+    temp_keys = cases_by_hl[h_l_key]
+    
+ 
+    
+    # Track which legend labels we've already used (reset for each subplot)
+    seen_sep = set()
+    seen_nosep = set()
+    
+    for i, temp_key in enumerate(temp_keys):
+        # Parse Mach values (for legend & dedupe)
+        m = re.search(r"Mach_([0-9]*\.?[0-9]+)", temp_key)
+        mach_string = m.group(1) if m else "?"
+        mach_val = float(mach_string) if m else np.nan
+        
+        # Separation x-locations and window bounds
+        xsep = np.asarray(x_sep[temp_key]).ravel()
+        xmax = np.asarray(x_max[temp_key]).ravel()
+        
+        # alpha list # 
+        alpha_list = np.linspace(0.8,0.3,len(temp_key))
+        
+        
+        # Geometry curve
+        min_l = 0.0
+        max_l = 0.1
+        
+        jitter_strength = 0.1
+        
+        x_temp = np.asarray(ds_by_case[temp_key]["X"].data)
+        y_temp = np.asarray(ds_by_case[temp_key]["Y"].data)
+        
+        # Creating an alpha list to make the scatter plot more clear #
+        
+        
+        mask = (x_temp < max_l) & (x_temp > min_l)
+        x_temp_in = x_temp[mask]
+        y_temp_in = y_temp[mask]
+        
+        # Plot the geometry once per case
+        ax.plot(x_temp_in, y_temp_in, color="blue", linewidth= 4.0)
+        
+        # Window mask: between the first two maxima
+        if xmax.size >= 2:
+            lo, hi = np.sort(xmax[:2])
+            mask_new = np.isfinite(xsep) & (xsep > lo) & (xsep < hi)
+            x_sep_filtered = xsep[mask_new]
+        else:
+            x_sep_filtered = np.array([], dtype=float)
+        
+        Re_temp = Re[temp_key]
+        
+        if x_sep_filtered.size:
+            # Take leftmost separation in the window
+            firstSepPointX = float(np.min(x_sep_filtered))
+            firstSepPointY = y_at_x_on_polyline(x_temp_in, y_temp_in, firstSepPointX)
+            
+            # Label each Mach ONCE for "sep" cases
+            label = f"{mach_string}"
+            if mach_val in seen_sep:
+                label = "_nolegend_"
+            else:
+                seen_sep.add(mach_val)
+            
+            ax.scatter(firstSepPointX, firstSepPointY,
+                       label=label, zorder=5, color=cmap(i), 
+                       edgecolor="k", linewidths=1, s=650, alpha = alpha_list[i])
+        else:
+            # Mark mid-window with a small x for "no sep" region
+            if xmax.size >= 2:
+                midx = 0.5 * (lo + hi)
+                midy = y_at_x_on_polyline(x_temp, y_temp, midx)
+                ax.scatter([midx], [midy], marker="x", color="0.3", zorder=4, s=600)
+            
+            # Add ONE legend entry per Mach for "(no sep)"
+            label = f"M = {mach_string} (no sep)"
+            if mach_val in seen_nosep:
+                label = "_nolegend_"
+            else:
+                seen_nosep.add(mach_val)
+            
+            ax.scatter([], [], color=cmap(i), label=label)
+    
+    # Subplot formatting
+    ax.set_title(f"h/l = {h_l:.2f}", fontsize=48, fontweight='bold')
+    ax.set_xlabel("X [m]", fontsize=34)
+    ax.set_ylabel("Y [m]", fontsize=34)
+    ax.tick_params(labelsize=34)
+    ax.grid(True)
+
+
+# Add a single shared legend outside the subplots
+# Collect handles and labels from the last subplot (or any subplot)
+handles, labels = axes[-1].get_legend_handles_labels()
+
+# Add a custom handle for the "x" marker (no separation cases)
+no_sep_handle = Line2D([0], [0], marker='x', color='0.3', linestyle='', 
+                       markersize=15, markeredgewidth=2, label='No separation')
+handles.append(no_sep_handle)
+labels.append('No separation')
+
+
+# Add a single shared legend outside the subplots
+# Collect handles and labels from the last subplot (or any subplot)
+#handles, labels = axes[-1].get_legend_handles_labels()
+fig.legend(handles, labels, loc='center right', bbox_to_anchor=(1.10, 0.5), 
+           fontsize=38, title="Mach Number", title_fontsize = 48)
+
+# Main title for the entire figure
+fig.suptitle("First Separation Point vs h/l", fontsize=58, fontweight='bold', y=1.02)
+
+plt.tight_layout()
+plt.subplots_adjust(right=0.88)  # Make room for the legend on the right
+plt.savefig('separation_points_subplots.png', dpi=150, bbox_inches='tight')
+plt.show()

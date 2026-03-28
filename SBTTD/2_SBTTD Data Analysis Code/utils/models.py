@@ -3592,3 +3592,9 @@ def generate_axial_force_plot_dual_mach(df, first_shock_pressures,
         plt.close()
     
     print(f"Dual plot saved to: {output_path}")
+    
+    
+
+
+
+    
