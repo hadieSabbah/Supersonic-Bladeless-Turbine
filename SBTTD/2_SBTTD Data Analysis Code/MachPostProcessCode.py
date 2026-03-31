@@ -508,6 +508,7 @@ from datetime import date
 from pathlib import Path
 
 # --- Reload latest BL results ---
+base_dir = Path(r"C:\Users\hhsabbah\Documents\01_Bladeless_Proj\35_Git\Supersonic-Bladeless-Turbine\SBTTD\data\processed\Boundary Layer Data\Mach Study")
 all_bl_dirs = sorted(base_dir.glob("BL_results_*"))  # finds all dated folders
 
 latest_dir = max(all_bl_dirs, key=lambda p: date.fromisoformat(p.name.split("_")[-1]))
@@ -583,6 +584,18 @@ plot_viscous_vs_inviscid_contours(
     save_dir     = r"C:\Users\hhsabbah\Documents\01_Bladeless_Proj\37_Mesh and CFD Setup\8_Proccessed Contours Results\2_Inviscid Comparison",
     mach_range = mach_range
 )
+
+
+
+#%%
+"""
+#------------------------------------------------------------------------------------------------------------------------------------#
+                                               Boundary layer thickness contour 
+#------------------------------------------------------------------------------------------------------------------------------------#
+
+"""
+
+
 
 
 #%%
