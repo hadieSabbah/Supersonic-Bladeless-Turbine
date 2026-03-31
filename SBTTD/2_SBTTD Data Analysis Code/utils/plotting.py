@@ -69,7 +69,7 @@ def plotter(x, y, x_string, y_string, unit_x, unit_y, save = False, return_axes 
         
 
 def plot_BL_thickness_subplots(delta_n_dict, x_start_dict, save=False,
-                            save_dir=Path(r"C:\Users\hhsabbah\Documents\01_Bladeless_Proj\35_Git\Supersonic-Bladeless-Turbine\SBTTD\reports\figures\Mach Study")):
+                                save_dir=Path(r"C:\Users\hhsabbah\Documents\01_Bladeless_Proj\35_Git\Supersonic-Bladeless-Turbine\SBTTD\reports\figures\Mach Study")):
     """
     All h/l cases in one figure — one subplot per h/l, curves = Mach numbers.
 
@@ -86,8 +86,8 @@ def plot_BL_thickness_subplots(delta_n_dict, x_start_dict, save=False,
     mpl.rcParams['font.size']       = 24
     mpl.rcParams['axes.labelsize']  = 34
     mpl.rcParams['axes.titlesize']  = 34
-    mpl.rcParams['xtick.labelsize'] = 18
-    mpl.rcParams['ytick.labelsize'] = 18
+    mpl.rcParams['xtick.labelsize'] = 12
+    mpl.rcParams['ytick.labelsize'] = 12
     mpl.rcParams['figure.dpi']      = 1200
     mpl.rcParams['savefig.dpi']     = 600
     mpl.rcParams['axes.linewidth']  = 1
@@ -112,7 +112,6 @@ def plot_BL_thickness_subplots(delta_n_dict, x_start_dict, save=False,
     for ax_idx, hl in enumerate(hl_values):
         ax = axes_flat[ax_idx]
 
-        # All keys for this h/l, sorted by Mach
         keys_for_hl = sorted(
             [k for k in delta_n_dict if re.search(rf'h_l_{re.escape(hl)}_', k)],
             key=lambda k: float(re.search(r'Mach_([\d.]+)', k).group(1))
@@ -129,35 +128,33 @@ def plot_BL_thickness_subplots(delta_n_dict, x_start_dict, save=False,
         ax.set_title(f"h/l = {hl}")
         ax.set_xlabel(r"X [m]")
         ax.set_ylabel(r"BL $\delta$ [mm]")
-        # ax.legend(...)  <-- remove this line
         ax.grid(True, alpha=0.3)
 
     # Hide unused subplot slots
     for ax_idx in range(n_hl, len(axes_flat)):
         axes_flat[ax_idx].set_visible(False)
 
-    # Single figure-level legend from the first subplot's handles
+    # Single figure-level legend from the first subplot
     handles, labels = axes_flat[0].get_legend_handles_labels()
     fig.legend(handles, labels,
                loc='center left',
-               bbox_to_anchor=(1.01, 0.5),   # just outside the right edge
+               bbox_to_anchor=(1.01, 0.5),
                frameon=False,
-               fontsize=18,
+               fontsize=12,
                title='Mach Number',
-               title_fontsize=18)
+               title_fontsize=13)
 
-    fig.suptitle("Boundary Layer Thickness — All Cases", fontsize=24)
+    fig.suptitle("Boundary Layer Thickness — All Cases", fontsize=14)
     plt.tight_layout()
     plt.show()
 
     if save:
         save_dir = Path(save_dir)
         save_dir.mkdir(parents=True, exist_ok=True)
-        fig.savefig(save_dir / "BL_thickness_all_cases.png", dpi=600,
-                    bbox_inches='tight')   # bbox_inches='tight' ensures legend is not clipped
-        fig.savefig(save_dir / "BL_thickness_all_cases.pdf", bbox_inches='tight')
+        fig.savefig(save_dir / "BL_thickness_all_cases.png", dpi=600, bbox_inches='tight')
+        fig.savefig(save_dir / "BL_thickness_all_cases.pdf",            bbox_inches='tight')
+
     plt.close(fig)
-    
     
     
 def plot_BL_location_tecplot(edge_x_dict, edge_y_dict, file_paths, ds_by_case,
@@ -254,6 +251,155 @@ def plot_BL_location_tecplot(edge_x_dict, edge_y_dict, file_paths, ds_by_case,
         out_path = save_dir / f"BL_location_{key}.png"
         tp.export.save_png(out_path.as_posix(), width=1920)
         print(f"Saved: {out_path}")
+        
+        
+
+
+
+
+def plot_BL_and_separation_contours(delta_n_dict, x, x_sep,
+                                     sep_length_nonDim,
+                                     save=False,
+                                     save_dir=Path(r"C:\Users\hhsabbah\Documents\01_Bladeless_Proj\35_Git\Supersonic-Bladeless-Turbine\SBTTD\reports\figures\Mach Study")):
+    """
+    Parameters
+    ----------
+    delta_n_dict      : dict  {key: np.ndarray}  BL thickness [mm]
+    x                 : dict  {key: np.ndarray}  wall x-coordinates [m]
+    x_sep             : dict  {key: np.ndarray}  separation x-locations from find_sepLength
+    sep_length_nonDim : dict  {key: float}       normalized separation length from find_sepLength
+    """
+
+    mpl.rcParams['font.family']    = 'serif'
+    mpl.rcParams['font.serif']     = ['Times New Roman']
+    mpl.rcParams['font.size']      = 18
+    mpl.rcParams['axes.labelsize'] = 18
+    mpl.rcParams['figure.dpi']     = 600
+    mpl.rcParams['savefig.dpi']    = 600
+
+    hl_bl    = []
+    mach_bl  = []
+    bl_vals  = []
+
+    hl_sep   = []
+    mach_sep = []
+    sep_vals = []
+
+    for key in delta_n_dict:
+        hl_m   = re.search(r'h_l_([\d.x]+)', key)
+        mach_m = re.search(r'Mach_([\d.]+)', key)
+        if not hl_m or not mach_m or hl_m.group(1) == 'x':
+            continue
+
+        hl   = float(hl_m.group(1))
+        mach = float(mach_m.group(1))
+
+        # --- Plot 2: separation % from find_sepLength (all cases) ---
+        sep_nd = sep_length_nonDim.get(key, 0.0)
+        sep_nd = 0.0 if (sep_nd is None or np.isnan(sep_nd)) else sep_nd
+        hl_sep.append(hl)
+        mach_sep.append(mach)
+        sep_vals.append(sep_nd * 100.0)
+
+
+
+        # --- Plot 1: BL height before separation ---
+        # Use x_sep from find_sepLength — already correctly computed on curved wall
+        x_sep_pts = x_sep.get(key, np.array([]))
+        if x_sep_pts.size == 0:
+            continue  # no separation
+        
+
+
+        # First separation x-location
+        x_sep_first = float(x_sep_pts[0])
+
+
+
+        # Find the index in x[key] closest to x_sep_first
+        x_wall    = x[key]
+        sep_idx   = int(np.argmin(np.abs(x_wall - x_sep_first)))
+
+
+
+        # delta_n_dict has one value per wall point — get last valid before sep_idx
+        delta_arr     = delta_n_dict[key]
+        pre_sep_delta = delta_arr[:sep_idx]
+        valid         = np.where(np.isfinite(pre_sep_delta))[0]
+        if len(valid) == 0:
+            continue
+
+
+
+        bl_val = float(pre_sep_delta[valid[-1]])
+        hl_bl.append(hl)
+        mach_bl.append(mach)
+        bl_vals.append(bl_val)
+
+    hl_bl    = np.array(hl_bl)
+    mach_bl  = np.array(mach_bl)
+    bl_vals  = np.array(bl_vals)
+    hl_sep   = np.array(hl_sep)
+    mach_sep = np.array(mach_sep)
+    sep_vals = np.array(sep_vals)
+
+    # Only h/l values with at least one separation case
+    hl_with_sep = set(hl_bl)
+    mask_bl     = np.array([hl in hl_with_sep for hl in hl_bl])
+
+
+
+    # --- Plot ---
+    fig, axes = plt.subplots(1, 2, figsize=(12, 5))
+
+   # sc1 = axes[0].scatter(hl_bl[mask_bl], mach_bl[mask_bl],
+    #                      c=bl_vals[mask_bl],
+     #                     cmap='cividis', s=200, zorder=5,
+      #                    edgecolors='k', linewidths=0.5)
+      
+      
+    # Normalize colormap to data range (exclude outliers using percentiles)
+    vmin_bl = np.percentile(bl_vals[mask_bl], 5)
+    vmax_bl = np.percentile(bl_vals[mask_bl], 95)
+
+    sc1 = axes[0].scatter(hl_bl[mask_bl], mach_bl[mask_bl],
+                          c=bl_vals[mask_bl],
+                          cmap='cividis', s=200, zorder=5,
+                          edgecolors='k', linewidths=0.5,
+                          vmin=vmin_bl, vmax=vmax_bl)
+    
+      
+      
+    fig.colorbar(sc1, ax=axes[0], label=r'BL $\delta$ before sep. [mm]')
+    axes[0].set_xlabel('h/l')
+    axes[0].set_ylabel('Mach')
+    axes[0].set_title('BL Height Before Separation')
+    axes[0].grid(True, alpha=0.3)
+
+    sc2 = axes[1].scatter(hl_sep, mach_sep,
+                          c=sep_vals,
+                          cmap='cividis', s=200, zorder=5,
+                          edgecolors='k', linewidths=0.5)
+    fig.colorbar(sc2, ax=axes[1], label='Separation [%]')
+    axes[1].set_xlabel('h/l')
+    axes[1].set_ylabel('Mach')
+    axes[1].set_title('Separation Percentage')
+    axes[1].grid(True, alpha=0.3)
+
+    plt.tight_layout()
+    plt.show()
+
+    if save:
+        save_dir = Path(save_dir)
+        save_dir.mkdir(parents=True, exist_ok=True)
+        fig.savefig(save_dir / "BL_separation_contours.png", dpi=600, bbox_inches='tight')
+        fig.savefig(save_dir / "BL_separation_contours.pdf",            bbox_inches='tight')
+
+    plt.close(fig)
+
+
+
+    
     
 def plot_BL_thickness(delta_n_dict, x_start_dict, save=False,
                       save_dir=Path(r"C:\Users\hhsabbah\Documents\01_Bladeless_Proj\35_Git\Supersonic-Bladeless-Turbine\SBTTD\reports\figures\Mach Study")):

@@ -26,7 +26,7 @@ import utils.plotting
 
 from utils.parameterComputation import variableImporterMasked, ReCompute, yplusThreshold
 from utils.dataload_util import assign_dir, bigImport, runSaver, runLoader, file_pathFinder, load_minfo_step_force
-from utils.plotting import plotter, plotter_multi_all, plotter_multiPerCase, subplotter, plot_scaled_axialForce_vs_hl,plot_BL_thickness,plot_BL_location_tecplot,plot_BL_thickness_subplots, plot_mach_contours_per_hl, plot_viscous_vs_inviscid_contours, subplotter_multiPerCase, load_mcfd_info1 , load_mcfd_net_mass_flux, export_mach_contours
+from utils.plotting import plotter, plotter_multi_all, plotter_multiPerCase, subplotter, plot_scaled_axialForce_vs_hl,plot_BL_thickness,plot_BL_location_tecplot,plot_BL_thickness_subplots, plot_mach_contours_per_hl, plot_viscous_vs_inviscid_contours, subplotter_multiPerCase, load_mcfd_info1 , load_mcfd_net_mass_flux, export_mach_contours,  plot_BL_and_separation_contours
 from utils.models import analyze_geometries, get_first_shock_pressures, offsetGeomPoints, smallPertSolver, find_sepLength, max_min_finder,mach_vs_sepLength, smallPertSolver_with_SE, smallPertSolver_combined, compute_power_2D , compute_force_2D , compute_torque_2D_norm , load_csv_data, load_tecplot_data, generate_torque_table_mach , compute_torque_2D_norm, generate_axial_force_plot_mach, generate_axial_force_plot_dual_mach, create_axial_force_dataframe
 
 
@@ -587,16 +587,6 @@ plot_viscous_vs_inviscid_contours(
 
 
 
-#%%
-"""
-#------------------------------------------------------------------------------------------------------------------------------------#
-                                               Boundary layer thickness contour 
-#------------------------------------------------------------------------------------------------------------------------------------#
-
-"""
-
-
-
 
 #%%
 
@@ -1009,6 +999,15 @@ x_max, x_min, y_max, y_min = max_min_finder(ds_by_case,x,y)
 
 mach = mach_vs_sepLength(ds_by_case, x, y, sep_length_nonDim)
 
+
+#%%
+"""
+#------------------------------------------------------------------------------------------------------------------------------------#
+                                               Boundary layer thickness contour 
+#------------------------------------------------------------------------------------------------------------------------------------#
+
+"""
+plot_BL_and_separation_contours(delta_n_dict, x, x_sep, sep_length_nonDim, save=True)
 
 
 
@@ -1816,15 +1815,15 @@ import matplotlib.cm as cm
 # Usage
 # =============================================================================
 
-# Single plot: Force vs h/l
-generate_axial_force_plot_mach(
-    df_comparison, 
-    output_path=r'C:\Users\hhsabbah\Documents\01_Bladeless_Proj\35_Git\Supersonic-Bladeless-Turbine\SBTTD\reports\figures\Mach Study\axialForce_vs_hl_plot.png',
-    title="Axial Force vs h/l\n(Varying Mach Number)",
-    ylabel="Axial Force [N/m]",
-    show_optimal=True
-)
+# Single plot: Force vs h/l; can you 
+generate_axial_force_plot_mach(df_comparison, norm_dict=P_inlet, norm_label='$P_{inlet}$',
+                                output_path='axial_force_normalized.png')
 
+
+
+
+
+#%%
 # Normalized version
 generate_axial_force_plot_mach(
     df_comparisonNorm, 

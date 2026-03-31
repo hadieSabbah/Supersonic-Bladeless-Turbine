@@ -1001,3 +1001,99 @@ plt.tight_layout()
 plt.subplots_adjust(right=0.88)  # Make room for the legend on the right
 plt.savefig('separation_points_subplots.png', dpi=150, bbox_inches='tight')
 plt.show()
+
+
+#%%
+
+# =============================================================================
+# Plot generation function (Mach number version)
+# =============================================================================
+def generate_axial_force_plot_mach(df, output_path='axial_force_plot_mach.png', 
+                                    title=None, ylabel="Axial Force [N/m]", 
+                                    show_optimal=True, show_plot=True):
+    """
+    Generate a plot of axial force vs h/l for different Mach numbers.
+    
+    Parameters
+    ----------
+    df : pandas DataFrame
+        Must contain columns: 'Mach', 'h/l', 'tau_h_l_x [N·m/m²]', 'tau_h_l [N·m/m²]'
+    output_path : str
+        Path to save the output image
+    title : str, optional
+        Custom title for the plot
+    ylabel : str
+        Label for y-axis
+    show_optimal : bool
+        Whether to show the optimal h/l reference lines
+    show_plot : bool
+        Whether to display the plot in terminal (default: True)
+    
+    Returns
+    -------
+    None (saves image to output_path)
+    """
+    
+    # Extract unique values
+    mach_numbers = sorted(df['Mach'].unique())
+    h_l_values = sorted(df['h/l'].unique())
+    
+    # Get tau_h_l_x (optimal) values for each Mach number
+    tau_x_by_mach = df.groupby('Mach')['tau_h_l_x [N·m/m²]'].first().to_dict()
+    
+    # Pivot for easy plotting
+    pivot = df.pivot(index='h/l', columns='Mach', values='tau_h_l [N·m/m²]')
+    
+    # Create figure
+    fig, ax = plt.subplots(figsize=(12, 8))
+    
+    # Colormap for Mach lines
+    cmap = cm.get_cmap('viridis', len(mach_numbers))
+    
+    # Plot each Mach number as a separate line
+    for i, mach in enumerate(mach_numbers):
+        color = cmap(i)
+        
+        # Plot h/l values
+        y_vals = [pivot.loc[h_l, mach] for h_l in h_l_values]
+        ax.plot(h_l_values, y_vals, 'o-', color=color, linewidth=2, 
+                markersize=8, label=f'M = {mach}')
+        
+        # Plot optimal value as a horizontal dashed line
+        if show_optimal:
+            ax.axhline(y=tau_x_by_mach[mach], color=color, linestyle='--', 
+                       alpha=0.5, linewidth=1.5)
+            
+            # Add marker at far right for optimal
+            ax.scatter(h_l_values[-1] + 0.005, tau_x_by_mach[mach], 
+                       marker='*', s=150, color=color, edgecolor='k', 
+                       linewidths=0.5, zorder=5)
+    
+    # Add annotation for optimal lines
+    if show_optimal:
+        ax.annotate('★ = Optimal h/l', xy=(0.98, 0.02), xycoords='axes fraction',
+                    fontsize=11, ha='right', va='bottom',
+                    bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
+    
+    # Formatting
+    if title is None:
+        title = "Axial Force vs h/l\n(Varying Mach Number)"
+    ax.set_title(title, fontsize=16, fontweight='bold')
+    ax.set_xlabel("h/l", fontsize=14)
+    ax.set_ylabel(ylabel, fontsize=14)
+    ax.tick_params(labelsize=12)
+    ax.grid(True, alpha=0.3)
+    ax.legend(title="Mach Number", title_fontsize=12, fontsize=11,
+              loc='center left', bbox_to_anchor=(1.02, 0.5))
+    
+    # Adjust layout
+    plt.tight_layout()
+    plt.savefig(output_path, dpi=150, bbox_inches='tight', 
+                facecolor='white', edgecolor='none')
+    
+    if show_plot:
+        plt.show()
+    else:
+        plt.close()
+    
+    print(f"Plot saved to: {output_path}")
