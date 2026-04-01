@@ -26,7 +26,7 @@ import utils.plotting
 
 from utils.parameterComputation import variableImporterMasked, ReCompute, yplusThreshold
 from utils.dataload_util import assign_dir, bigImport, runSaver, runLoader, file_pathFinder, load_minfo_step_force
-from utils.plotting import plotter, plotter_multi_all, plotter_multiPerCase, subplotter, plot_scaled_axialForce_vs_hl,plot_BL_thickness,plot_BL_location_tecplot,plot_BL_thickness_subplots, plot_mach_contours_per_hl, plot_viscous_vs_inviscid_contours, subplotter_multiPerCase, load_mcfd_info1 , load_mcfd_net_mass_flux, export_mach_contours,  plot_BL_and_separation_contours
+from utils.plotting import plotter, plotter_multi_all, plotter_multiPerCase, subplotter, plot_scaled_axialForce_vs_hl,plot_BL_thickness,plot_BL_location_tecplot,plot_BL_thickness_subplots, plot_mach_contours_per_hl, plot_viscous_vs_inviscid_contours, subplotter_multiPerCase, load_mcfd_info1 , load_mcfd_net_mass_flux, export_mach_contours,  plot_BL_and_separation_contours, plot_dpdx_before_sep_contour, plot_dpdx_before_sep_3D
 from utils.models import analyze_geometries, get_first_shock_pressures, offsetGeomPoints, smallPertSolver, find_sepLength, max_min_finder,mach_vs_sepLength, smallPertSolver_with_SE, smallPertSolver_combined, compute_power_2D , compute_force_2D , compute_torque_2D_norm , load_csv_data, load_tecplot_data, generate_torque_table_mach , compute_torque_2D_norm, generate_axial_force_plot_mach, generate_axial_force_plot_dual_mach, create_axial_force_dataframe
 
 
@@ -859,6 +859,31 @@ subplotter_multiPerCase(
     vary_param='mach',
     save=False
 )
+
+
+
+
+#%%
+
+
+"""
+#------------------------------------------------------------------------------------------------------------------------------------#
+                                      Finding the pressure gradient right before separation. 
+#------------------------------------------------------------------------------------------------------------------------------------#
+""" 
+
+
+plot_dpdx_before_sep_contour(Px, x, x_sep, sep_length_nonDim, save=True)
+
+
+#%%
+
+
+### 3D Function ###
+
+plot_dpdx_before_sep_3D(Px, x, x_sep, save=True)
+
+
 
 
 #%%  

@@ -2113,3 +2113,197 @@ def plot_viscous_vs_inviscid_contours(
 
     plt.close(fig)
     return fig, axes
+
+
+
+
+
+
+
+
+
+def plot_dpdx_before_sep_contour(Px, x, x_sep, sep_length_nonDim,
+                                  save=False,
+                                  save_dir=Path(r"C:\Users\hhsabbah\Documents\01_Bladeless_Proj\35_Git\Supersonic-Bladeless-Turbine\SBTTD\reports\figures\Mach Study")):
+    """
+    Scatter plot of dp/dx right before separation vs h/l and Mach number.
+
+    Parameters
+    ----------
+    Px                : dict  {key: np.ndarray}  x-pressure gradient [Pa/m]
+    x                 : dict  {key: np.ndarray}  wall x-coordinates [m]
+    x_sep             : dict  {key: np.ndarray}  separation x-locations from find_sepLength
+    sep_length_nonDim : dict  {key: float}       normalized separation length
+    """
+
+    mpl.rcParams['font.family']    = 'serif'
+    mpl.rcParams['font.serif']     = ['Times New Roman']
+    mpl.rcParams['font.size']      = 12
+    mpl.rcParams['axes.labelsize'] = 12
+    mpl.rcParams['figure.dpi']     = 300
+    mpl.rcParams['savefig.dpi']    = 600
+
+    hl_vals   = []
+    mach_vals = []
+    dpdx_vals = []
+
+    for key in Px:
+        hl_m   = re.search(r'h_l_([\d.x]+)', key)
+        mach_m = re.search(r'Mach_([\d.]+)', key)
+        if not hl_m or not mach_m or hl_m.group(1) == 'x':
+            continue
+
+        hl   = float(hl_m.group(1))
+        mach = float(mach_m.group(1))
+
+        # --- Check if separation exists ---
+        x_sep_pts = x_sep.get(key, np.array([]))
+        if x_sep_pts.size == 0:
+            continue  # no separation — skip
+
+        # --- Find index just before first separation point ---
+        x_sep_first = float(x_sep_pts[0])
+        x_wall      = x[key]
+        sep_idx     = int(np.argmin(np.abs(x_wall - x_sep_first)))
+
+        # Take the index just before separation
+        pre_sep_idx = max(0, sep_idx - 1)
+
+        dpdx_val = float(Px[key][pre_sep_idx])
+
+        hl_vals.append(hl)
+        mach_vals.append(mach)
+        dpdx_vals.append(dpdx_val)
+
+    hl_vals   = np.array(hl_vals)
+    mach_vals = np.array(mach_vals)
+    dpdx_vals = np.array(dpdx_vals)
+
+    if len(hl_vals) == 0:
+        print("No cases with separation found.")
+        return
+
+    # Normalize colormap
+    vmin = np.percentile(dpdx_vals, 5)
+    vmax = np.percentile(dpdx_vals, 95)
+
+    # --- Plot ---
+    fig, ax = plt.subplots(figsize=(7, 5))
+
+    sc = ax.scatter(hl_vals, mach_vals,
+                    c=dpdx_vals,
+                    cmap='cividis', s=200, zorder=5,
+                    edgecolors='k', linewidths=0.5,
+                    vmin=vmin, vmax=vmax)
+
+    fig.colorbar(sc, ax=ax, label=r'$dP/dx$ before sep. [Pa/m]')
+    ax.set_xlabel('h/l')
+    ax.set_ylabel('Mach')
+    ax.set_title(r'$dP/dx$ Before Separation')
+    ax.grid(True, alpha=0.3)
+
+    plt.tight_layout()
+    plt.show()
+
+    if save:
+        save_dir = Path(save_dir)
+        save_dir.mkdir(parents=True, exist_ok=True)
+        fig.savefig(save_dir / "dpdx_before_sep.png", dpi=600, bbox_inches='tight')
+        fig.savefig(save_dir / "dpdx_before_sep.pdf",            bbox_inches='tight')
+
+    plt.close(fig)
+    
+    
+    
+    
+    
+
+def plot_dpdx_before_sep_3D(Px, x, x_sep, save=False,
+                              save_dir=Path(r"C:\Users\hhsabbah\Documents\01_Bladeless_Proj\35_Git\Supersonic-Bladeless-Turbine\SBTTD\reports\figures\Mach Study")):
+    """
+    3D scatter plot of dp/dx right before separation.
+    x-axis: h/l, y-axis: Mach, z-axis: dP/dx [Pa/m]
+
+    Parameters
+    ----------
+    Px    : dict  {key: np.ndarray}  x-pressure gradient [Pa/m]
+    x     : dict  {key: np.ndarray}  wall x-coordinates [m]
+    x_sep : dict  {key: np.ndarray}  separation x-locations from find_sepLength
+    """
+
+    mpl.rcParams['font.family']    = 'serif'
+    mpl.rcParams['font.serif']     = ['Times New Roman']
+    mpl.rcParams['font.size']      = 12
+    mpl.rcParams['axes.labelsize'] = 12
+    mpl.rcParams['figure.dpi']     = 300
+    mpl.rcParams['savefig.dpi']    = 600
+
+    hl_vals   = []
+    mach_vals = []
+    dpdx_vals = []
+
+    for key in Px:
+        hl_m   = re.search(r'h_l_([\d.x]+)', key)
+        mach_m = re.search(r'Mach_([\d.]+)', key)
+        if not hl_m or not mach_m or hl_m.group(1) == 'x':
+            continue
+
+        hl   = float(hl_m.group(1))
+        mach = float(mach_m.group(1))
+
+        x_sep_pts = x_sep.get(key, np.array([]))
+        if x_sep_pts.size == 0:
+            continue
+
+        x_sep_first = float(x_sep_pts[0])
+        x_wall      = x[key]
+        sep_idx     = int(np.argmin(np.abs(x_wall - x_sep_first)))
+        pre_sep_idx = max(0, sep_idx - 1)
+
+        dpdx_val = float(Px[key][pre_sep_idx])
+
+        hl_vals.append(hl)
+        mach_vals.append(mach)
+        dpdx_vals.append(dpdx_val)
+
+    hl_vals   = np.array(hl_vals)
+    mach_vals = np.array(mach_vals)
+    dpdx_vals = np.array(dpdx_vals)
+
+    if len(hl_vals) == 0:
+        print("No cases with separation found.")
+        return
+
+    # --- 3D Plot ---
+    from mpl_toolkits.mplot3d import Axes3D
+
+    fig = plt.figure(figsize=(10, 7))
+    ax  = fig.add_subplot(111, projection='3d')
+
+    sc = ax.scatter(hl_vals, mach_vals, dpdx_vals,
+                    c=dpdx_vals, cmap='cividis',
+                    s=100, edgecolors='k', linewidths=0.5,
+                    depthshade=True)
+
+    fig.colorbar(sc, ax=ax, label=r'$dP/dx$ before sep. [Pa/m]',
+                 shrink=0.5, pad=0.1)
+
+    ax.set_xlabel('h/l',   labelpad=10)
+    ax.set_ylabel('Mach',  labelpad=10)
+    ax.set_zlabel(r'$dP/dx$ [Pa/m]', labelpad=10)
+    ax.set_title(r'$dP/dx$ Before Separation — 3D View')
+
+    ax.view_init(elev=25, azim=45)   # adjust viewing angle if needed
+
+    plt.tight_layout()
+    plt.show()
+
+    if save:
+        save_dir = Path(save_dir)
+        save_dir.mkdir(parents=True, exist_ok=True)
+        fig.savefig(save_dir / "dpdx_before_sep_3D.png", dpi=600, bbox_inches='tight')
+        fig.savefig(save_dir / "dpdx_before_sep_3D.pdf",            bbox_inches='tight')
+
+    plt.close(fig)
+    
+    
