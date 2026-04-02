@@ -23,10 +23,9 @@ os.chdir(new_dirc)
 # Importing modules # 
 # In your notebook/script, run this FIRST:
 import utils.plotting
-
 from utils.parameterComputation import variableImporterMasked, ReCompute, yplusThreshold
 from utils.dataload_util import assign_dir, bigImport, runSaver, runLoader, file_pathFinder, load_minfo_step_force
-from utils.plotting import plotter, plotter_multi_all, plotter_multiPerCase, subplotter, plot_scaled_axialForce_vs_hl,plot_BL_thickness,plot_BL_location_tecplot,plot_BL_thickness_subplots, plot_mach_contours_per_hl, plot_viscous_vs_inviscid_contours, subplotter_multiPerCase, load_mcfd_info1 , load_mcfd_net_mass_flux, export_mach_contours,  plot_BL_and_separation_contours, plot_dpdx_before_sep_contour, plot_dpdx_before_sep_3D
+from utils.plotting import plotter, plotter_multi_all, plotter_multiPerCase, subplotter, plot_scaled_axialForce_vs_hl,plot_BL_thickness,plot_BL_location_tecplot,plot_BL_thickness_subplots, plot_mach_contours_per_hl, plot_viscous_vs_inviscid_contours, subplotter_multiPerCase, load_mcfd_info1 , load_mcfd_net_mass_flux, export_mach_contours,  plot_BL_and_separation_contours, plot_dpdx_before_sep_contour, plot_dpdx_before_sep_3D, plot_total_pressure_loss, plot_total_pressure_loss_3D, plot_power_vs_pressure_loss, plot_power_vs_pressure_loss_3D, plot_theta_max_occurrence, plot_mach_wave_coalescence_SE
 from utils.models import analyze_geometries, get_first_shock_pressures, offsetGeomPoints, smallPertSolver, find_sepLength, max_min_finder,mach_vs_sepLength, smallPertSolver_with_SE, smallPertSolver_combined, compute_power_2D , compute_force_2D , compute_torque_2D_norm , load_csv_data, load_tecplot_data, generate_torque_table_mach , compute_torque_2D_norm, generate_axial_force_plot_mach, generate_axial_force_plot_dual_mach, create_axial_force_dataframe
 
 
@@ -873,7 +872,8 @@ subplotter_multiPerCase(
 """ 
 
 
-plot_dpdx_before_sep_contour(Px, x, x_sep, sep_length_nonDim, save=True)
+plot_dpdx_before_sep_contour(Px, x, x_sep, norm_dict=P_inlet,
+                              norm_label='$P_{inlet}$', save=True)
 
 
 #%%
@@ -881,8 +881,8 @@ plot_dpdx_before_sep_contour(Px, x, x_sep, sep_length_nonDim, save=True)
 
 ### 3D Function ###
 
-plot_dpdx_before_sep_3D(Px, x, x_sep, save=True)
-
+plot_dpdx_before_sep_3D(Px, x, x_sep, norm_dict=P_inlet,
+                         norm_label='$P_{inlet}$', save=True)
 
 
 
@@ -935,7 +935,55 @@ subplotter_multiPerCase(iter_dict, flux_dict,
     
 
 
+#%% 
 
+"""
+#------------------------------------------------------------------------------------------------------------------------------------#
+                                                Computing total pressure loss through the wavy section
+#------------------------------------------------------------------------------------------------------------------------------------#
+""" 
+
+
+plot_total_pressure_loss(ds_by_case_quad, ds_by_case_inlet, save=True)
+
+
+#%% 3D
+
+plot_total_pressure_loss_3D(ds_by_case_quad, ds_by_case_inlet, save=True)
+
+
+#%% Computing pressure loss versus axial force normalized by static pressure ##
+
+plot_power_vs_pressure_loss(df_axial_force, ds_by_case_quad, ds_by_case_inlet,
+                             P_inlet, save=True)
+
+#%% Computing pressure loss versus axial force normalized by static pressure 3D ##
+
+plot_power_vs_pressure_loss_3D(df_axial_force, ds_by_case_quad, ds_by_case_inlet,
+                                P_inlet, save=True)
+
+
+
+
+
+#%% 
+
+"""
+#------------------------------------------------------------------------------------------------------------------------------------#
+                                       Determining whether theta_max was reached or not 
+#------------------------------------------------------------------------------------------------------------------------------------#
+"""
+
+
+
+
+plot_theta_max_occurrence(x, y, ds_by_case,
+                           h_l_range=(0.02, 0.05), save=True)
+
+
+#%%
+plot_mach_wave_coalescence_SE(x, y, ds_by_case,
+                               h_l_range=(0.02, 0.05), save=True)
 
 #%%
 
