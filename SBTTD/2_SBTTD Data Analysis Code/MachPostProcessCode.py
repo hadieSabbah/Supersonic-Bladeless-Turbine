@@ -26,7 +26,7 @@ import utils.plotting
 from utils.parameterComputation import variableImporterMasked, ReCompute, yplusThreshold
 from utils.dataload_util import assign_dir, bigImport, runSaver, runLoader, file_pathFinder, load_minfo_step_force
 from utils.plotting import plotter, plotter_multi_all, plotter_multiPerCase, subplotter, plot_scaled_axialForce_vs_hl,plot_BL_thickness,plot_BL_location_tecplot,plot_BL_thickness_subplots, plot_mach_contours_per_hl, plot_viscous_vs_inviscid_contours, subplotter_multiPerCase, load_mcfd_info1 , load_mcfd_net_mass_flux, export_mach_contours,  plot_BL_and_separation_contours, plot_dpdx_before_sep_contour, plot_dpdx_before_sep_3D, plot_total_pressure_loss, plot_total_pressure_loss_3D, plot_power_vs_pressure_loss, plot_power_vs_pressure_loss_3D, plot_theta_max_occurrence, plot_mach_wave_coalescence_SE
-from utils.models import analyze_geometries, get_first_shock_pressures, offsetGeomPoints, smallPertSolver, find_sepLength, max_min_finder,mach_vs_sepLength, smallPertSolver_with_SE, smallPertSolver_combined, compute_power_2D , compute_force_2D , compute_torque_2D_norm , load_csv_data, load_tecplot_data, generate_torque_table_mach , compute_torque_2D_norm, generate_axial_force_plot_mach, generate_axial_force_plot_dual_mach, create_axial_force_dataframe
+from utils.models import analyze_geometries, get_first_shock_pressures, offsetGeomPoints, smallPertSolver, find_sepLength, max_min_finder,mach_vs_sepLength, smallPertSolver_with_SE, smallPertSolver_combined, compute_power_2D , compute_force_2D , compute_torque_2D_norm , load_csv_data, load_tecplot_data, generate_torque_table_mach , compute_torque_2D_norm, generate_axial_force_plot_mach, generate_axial_force_plot_dual_mach, create_axial_force_dataframe, smallPertSolver_sepAware, SE_model,SE_first_shock, SE_axial_force_comparison,SE_first_shock_single
 
 
 #%%
@@ -2007,7 +2007,7 @@ axialForceScaled, axialForceScaled_SE = smallPertSolver_with_SE(
 
 #%%
 axialForceScaled, axialForceScaled_SE, axialForceScaled_combined = \
-    smallPertSolver_combined(h_l_values, ds_by_case, plotting=False)
+    smallPertSolver_combined(h_l_values, ds_by_case, plotting=True)
 
 
 #%%
@@ -2020,6 +2020,196 @@ h_l_values = np.arange(0.02,0.1,0.01) # Defining the h_l values that we have
 
 # Plotting the results # 
 plot_scaled_axialForce_vs_hl(axialForceScaled, h_l_values)
+
+
+
+
+
+
+#%%
+
+
+from scipy.optimize import root_scalar
+from scipy import optimize
+from scipy.optimize import brentq
+
+
+
+### Defining the funtions for prandly meter for both compression and expansion ###
+
+
+
+# Creating a very simpmle Mach collapse model fo ra simple isentropic compression #
+def get_prandtl_meyer(mach, gamma=1.4):
+    '''Evaluate Prandtl-Meyer function at given Mach number.
+    
+    Defined as the angle from the flow direction where Mach = 1 through which the 
+    flow turned isentropically reaches the specified Mach number.
+    '''
+    return (
+        np.sqrt((gamma + 1) / (gamma - 1)) *
+        np.arctan(np.sqrt((gamma - 1)*(mach**2 - 1)/(gamma + 1))) -
+        np.arctan(np.sqrt(mach**2 - 1))
+        )
+
+def solve_prandtl_meyer(mach, nu, gamma=1.4):
+    '''Solve for unknown Mach number, given Prandtl-Meyer function (in radians).'''
+    return (nu - get_prandtl_meyer(mach, gamma))
+
+
+
+def oblique_shock_delta(theta, mach, gamma=1.4):
+    '''Calculate oblique shock deflection from shock angle and Mach'''
+    return (
+        np.arctan((2.0/np.tan(theta)) * (
+            (mach**2 * np.sin(theta)**2 - 1) /
+            (2 + mach**2 * (gamma + np.cos(2*theta)))
+            ))
+        )
+
+
+
+def solve_oblique_theta(theta, delta, mach, gamma=1.4):
+    '''Solve for oblique wave angle theta'''
+    return (delta - oblique_shock_delta(theta, mach, gamma))
+
+
+
+
+def get_mach_normal(gamma, mach1):
+    '''Calculate Mach number after a normal shock'''
+    return np.sqrt(
+        (mach1**2 + 2/(gamma - 1))/(2 * gamma * mach1**2/(gamma - 1) - 1)
+        )
+
+
+# Defining some variable # 
+temp_key = "h_l_0.02_Mach_4.0"
+
+
+# Finding the discrete angles # 
+x_run = x[temp_key]
+y_run = y[temp_key]
+M_inlet_run = np.mean(mach_inlet[temp_key])
+
+
+# Discretizing the domain # 
+dy_dx = np.gradient(y_run, x_run)
+delta_nus = np.degrees(np.arctan(dy_dx)) * -1 # To have the same nomenclature as compressible flow, where negative refers to compressiona and positive angle refers to exapnsion
+delta_nus_diff = np.diff(abs(delta_nus))
+
+
+# Finding the Mach number and the angle for each discrete line # 
+Mach_all = np.zeros(len(delta_nus_diff)+1)
+theta_all = np.zeros(len(delta_nus_diff))
+
+# Defining the boundary condition (the inlet mach number to the array) #
+Mach_all[0] = M_inlet_run
+gamma = 1.4 
+
+
+
+# If compressive ----> Solve the oblique-theta equations #
+for idx, delta in enumerate(delta_nus_diff):
+    
+    # Compression #
+    if delta < 0:
+        # Root scalar ---> solving the isentropic compression values # 
+        nu_1_comp = get_prandtl_meyer(Mach_all[idx],gamma)
+        nu_2_comp = nu_1_comp + delta * np.pi/180
+        
+        # Solving for the Mach number # 
+        Mach_all[idx+1] = brentq(solve_prandtl_meyer, 1.001, 50, args=(nu_2_comp, gamma))
+     
+    # Expansion # 
+    elif delta < 0: 
+        nu_1_exp = 28 * np.pi / 180 # Assuming that the flow statrs from sonic. Assumption is made to solve the closed form equation
+        nu_2_exp = nu_1_exp + delta * np.pi/180
+        
+        # Getting the Mach number After the expansion # 
+        Mach_all[idx+1] = brentq(solve_prandtl_meyer, 1.001, 50, args = (nu_2_exp,gamma))
+        
+    # Neither #    
+    elif delta == 0:
+        Mach_all[idx+1] = Mach_all[idx]
+        
+        
+        
+print(Mach_all)
+
+
+#%%
+
+
+# Plotting the Mach number Vs X and Y Vs X on the same plot for comparison # 
+Mach_all_mod = Mach_all[~(np.isnan(Mach_all)) | (Mach_all==0)]
+
+masked = len(Mach_all_mod)
+
+fig,ax1 = plt.subplots()
+ax1.plot(x_run[0:masked],Mach_all_mod)
+
+ax1.set_xlabel("X[m]")
+ax1.set_ylabel("Mach")
+
+
+ax2 = ax1.twinx()
+ax2.plot(x_run[0:masked],y_run[0:masked], color = "red")
+plt.grid()
+
+ax2.set_ylabel("Y[m]")
+plt.show()
+
+#%%
+# Plotting results # 
+fig, (ax_top, ax_bot) = plt.subplots(2, 1, figsize=(10, 6), sharex=True)
+
+ax_top.plot(x_run, y_run, 'k-')
+ax_top.set_ylabel('y [m]')
+ax_top.grid(True)
+
+ax_bot.plot(x_run, delta_geom_deg, 'b-')
+ax_bot.axhline(0, color='gray', linestyle='--')
+ax_bot.set_xlabel('x [m]')
+ax_bot.set_ylabel('δ [deg]')
+ax_bot.grid(True)
+
+fig.suptitle(temp_key)
+plt.tight_layout()
+plt.show()
+
+
+
+
+
+
+#%%
+
+# Defining inlet parameters #
+gamma = 1.4
+M1 = 2.40
+delta = 20 * np.pi/180
+
+
+# Root scalar ---> solving the oblique theta # 
+root = root_scalar(
+    solve_oblique_theta, x0=40*np.pi/180, x1=50*np.pi/180,
+    args=(delta, M1, gamma)
+    )
+
+# Getting theta # 
+theta = root.root
+print(f'Theta: {theta * 180/np.pi: .2f}°')
+
+
+# Getting the next Mach number value # 
+M1n = M1 * np.sin(theta)
+M2n = get_mach_normal(gamma, M1n)
+M2 = M2n / np.sin(theta - delta)
+print(f'M2: {M2: .3f}')
+
+
+
         
 
 #%%
@@ -2034,9 +2224,42 @@ y = h* np.exp((-x/x0)**2)
 plt.plot(x,y)
 
 
+#%%
 
+# Compute separation data first (you already do this)
+sep_length, sep_length_nonDim, x_sep, y_sep, x_attach, y_attach = \
+    find_sepLength(ds_by_case, x, tau_wall)
 
+# Now pass them into the solver
+axialForceScaled, axialForceScaled_SE, axialForceScaled_combined = \
+    smallPertSolver_combined(
+        h_l_values, ds_by_case,
+        sep_length_nonDim=sep_length_nonDim,   # NEW
+        x_sep=x_sep,                            # NEW
+        plotting=True
+    )
 
+    
+ 
+    
+    
+    #%%
+    
+axialForceScaled_SPT_sep = smallPertSolver_sepAware(
+    h_l_values, ds_by_case,
+    sep_length_nonDim=sep_length_nonDim,
+    x_sep=x_sep,
+    plotting=True
+)
+    
+#%%
+
+# Option A: just SPT (original behaviour, unchanged call)
+plot_scaled_axialForce_vs_hl(axialForceScaled_combined, h_l_values)
+        
+#%%
+
+plot_scaled_axialForce_vs_hl(axialForceScaled_SPT_sep, h_l_values)
 #%%
 """
 #------------------------------------------------------------------------------------------------------------------------------------#
@@ -2056,6 +2279,64 @@ first_shock_pressures = {}
 
 for key,_ in P_inlet.items(): 
     first_shock_pressures[key] = first_shock_pressure_ratios[key] * np.mean(P_inlet[key])
+
+
+
+
+#%% Testing new shock expansion model ###
+
+key_temp = 'h_l_0.08_Mach_4.0'
+dy_dx_grad = np.gradient(y[key_temp],x[key_temp])
+theta_geom = np.arctan(dy_dx_grad)
+
+#%%
+
+# --- Call ---
+result, dtheta = SE_first_shock_single('h_l_0.09_Mach_4.0', x, y, plot=True)
+
+#%%
+
+# --- Call ---
+M_array_dict = SE_model(h_l_values, x, y, plot=True)
+
+#%%
+h_l_values = [0.08,0.09]
+first_shock_dict = SE_first_shock(h_l_values, x, y, plot=True)
+
+
+#%%
+
+# --- Call ---
+# --- Call ---
+df_SE_force = SE_axial_force_comparison(h_l_values, x, y, ds_by_case, plot=True)
+print(df_SE_force.to_string(index=False))
+
+
+
+
+
+
+
+
+
+
+
+#%% Visualization ####
+fig, axes = plt.subplots(2, 1, figsize=(10, 6), sharex=True)
+fig.suptitle(key_temp, fontfamily='Times New Roman', fontsize=13)
+
+axes[0].plot(x[key_temp], y[key_temp], color='steelblue', lw=1.8)
+axes[0].set_ylabel('y [m]', fontfamily='Times New Roman')
+axes[0].grid(True, ls='--', alpha=0.4)
+
+axes[1].plot(x[key_temp], np.degrees(theta_geom), color='firebrick', lw=1.8)
+axes[1].axhline(0, color='k', lw=0.8, ls='--')
+axes[1].set_ylabel('θ [°]', fontfamily='Times New Roman')
+axes[1].set_xlabel('x [m]', fontfamily='Times New Roman')
+axes[1].grid(True, ls='--', alpha=0.4)
+
+plt.tight_layout()
+plt.show()
 
 
 

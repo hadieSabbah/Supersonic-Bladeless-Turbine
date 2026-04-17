@@ -3254,7 +3254,211 @@ def plot_mach_wave_coalescence_SE(x, y, ds_by_case,
     
 
     
-    
+def plot_scaled_axialForce_vs_hl(results_dict, h_l_values,
+                                  results_dict_SE=None,
+                                  results_dict_combined=None,
+                                  sep_length_nonDim=None,
+                                  sep_threshold=0.20,
+                                  save=False):
+    """
+    Plot F_RANS / F_theory vs h/l for each Mach number, overlaying up to
+    three theories on the same axes.
+
+    COLOR  → Mach number  (cividis colormap, consistent with your other plots)
+    LINESTYLE → Theory:
+        solid  (-)   = Small Perturbation  (results_dict,          always shown)
+        dashed (--)  = Shock-Expansion     (results_dict_SE,        if provided)
+        dotted (:)   = Sep-aware combined  (results_dict_combined,  if provided)
+
+    A horizontal dashed black line at y = 1.0 marks perfect agreement.
+
+    Separation-flagged points (sep_nonDim > sep_threshold) are overlaid with
+    an orange circle marker so you can immediately see which cases triggered
+    the separation model.
+
+    Parameters
+    ----------
+    results_dict : dict
+        {case_key: F_RANS/F_smallPert} — always required
+    h_l_values : array-like
+        Ordered h/l values to plot on x-axis
+    results_dict_SE : dict, optional
+        {case_key: F_RANS/F_SE}
+    results_dict_combined : dict, optional
+        {case_key: F_RANS/F_combined}  (sep-aware when sep > threshold)
+    sep_length_nonDim : dict, optional
+        {case_key: float} from find_sepLength(). Used to mark separated points.
+    sep_threshold : float
+        Separation fraction above which a marker is drawn. Default 0.20.
+    save : bool
+        Save PNG + PDF at 600 DPI to the standard Mach Study figures directory.
+
+    Returns
+    -------
+    fig, ax
+    """
+    import re
+    import numpy as np
+    import matplotlib as mpl
+    import matplotlib.pyplot as plt
+    import matplotlib.cm as cm
+
+    # -------------------------------------------------------------------------
+    # Publication rcParams (matches your existing style)
+    # -------------------------------------------------------------------------
+    mpl.rcParams['font.family']          = 'serif'
+    mpl.rcParams['font.serif']           = ['Times New Roman']
+    mpl.rcParams['font.size']            = 14
+    mpl.rcParams['axes.labelsize']       = 14
+    mpl.rcParams['axes.titlesize']       = 16
+    mpl.rcParams['xtick.labelsize']      = 12
+    mpl.rcParams['ytick.labelsize']      = 12
+    mpl.rcParams['legend.fontsize']      = 9
+    mpl.rcParams['legend.title_fontsize']= 10
+    mpl.rcParams['axes.linewidth']       = 1
+    mpl.rcParams['lines.linewidth']      = 1.8
+    mpl.rcParams['grid.linewidth']       = 0.5
+    mpl.rcParams['figure.dpi']           = 150   # screen; save overrides to 600
+    mpl.rcParams['savefig.dpi']          = 600
+
+    # -------------------------------------------------------------------------
+    # Parse Mach numbers from keys (same regex pattern as rest of your codebase)
+    # -------------------------------------------------------------------------
+    mach_numbers = set()
+    for key in results_dict.keys():
+        m = re.search(r'Mach_([\d.]+)', key)
+        if m:
+            mach_numbers.add(float(m.group(1)))
+    mach_numbers = sorted(mach_numbers)
+
+    cmap = cm.get_cmap('cividis', len(mach_numbers))
+
+    # -------------------------------------------------------------------------
+    # Theory definitions: (dict, linestyle, label suffix, zorder)
+    # Only include theories whose dicts were actually passed in.
+    # -------------------------------------------------------------------------
+    theories = [
+        (results_dict,          '-',  'Small Pert',  3),
+    ]
+    if results_dict_SE is not None:
+        theories.append((results_dict_SE,       '--', 'Shock-Exp',   3))
+    if results_dict_combined is not None:
+        theories.append((results_dict_combined, ':',  'Sep-aware',   3))
+
+    # -------------------------------------------------------------------------
+    # Figure
+    # -------------------------------------------------------------------------
+    fig, ax = plt.subplots(figsize=(7, 5))
+
+    # Perfect-agreement reference line — draw first so it sits behind data
+    ax.axhline(y=1.0, color='black', linestyle='--', linewidth=1.2,
+               alpha=0.55, label='Perfect agreement (ratio = 1)')
+
+    # -------------------------------------------------------------------------
+    # Main plot loop: one line per (Mach, theory) combination
+    # -------------------------------------------------------------------------
+    for i, mach in enumerate(mach_numbers):
+        color = cmap(i)
+
+        for theory_dict, ls, theory_label, zo in theories:
+            forces   = []
+            h_l_plot = []
+
+            for h_l in h_l_values:
+                case_key = f"h_l_{h_l:.2f}_Mach_{mach:.1f}"
+                if case_key in theory_dict:
+                    val = theory_dict[case_key]
+                    if val is not None and not np.isnan(val):
+                        forces.append(val)
+                        h_l_plot.append(h_l)
+
+            if not forces:
+                continue
+
+            forces   = np.array(forces)
+            h_l_plot = np.array(h_l_plot)
+
+            # Only the first theory gets a Mach label in the legend;
+            # subsequent theories for the same Mach share the color visually.
+            # The linestyle legend is added separately below.
+            mach_label = f"M = {mach:.1f}" if ls == theories[0][1] else None
+
+            ax.plot(h_l_plot, forces, linestyle=ls, color=color,
+                    marker='o', markersize=5, markeredgecolor='none',
+                    linewidth=1.8, label=mach_label, zorder=zo)
+
+    # -------------------------------------------------------------------------
+    # Separation markers: orange circle over points where sep model was active
+    # -------------------------------------------------------------------------
+    # TEACHING POINT — why overlay separately instead of changing the marker
+    # in the main loop?
+    # Because the separation flag is case-level (one flag per case_key), but
+    # we're plotting multiple theories per case. Overlaying a distinct marker
+    # on top keeps the linestyle encoding clean and unambiguous.
+    if sep_length_nonDim is not None and results_dict_combined is not None:
+        sep_x = []
+        sep_y = []
+        for h_l in h_l_values:
+            for mach in mach_numbers:
+                case_key = f"h_l_{h_l:.2f}_Mach_{mach:.1f}"
+                nd = sep_length_nonDim.get(case_key, 0.0)
+                if nd > sep_threshold and case_key in results_dict_combined:
+                    val = results_dict_combined[case_key]
+                    if val is not None and not np.isnan(val):
+                        sep_x.append(h_l)
+                        sep_y.append(val)
+
+        if sep_x:
+            ax.scatter(sep_x, sep_y, s=60, facecolors='none',
+                       edgecolors='darkorange', linewidths=1.5, zorder=5,
+                       label=f'Sep model active (sep > {int(sep_threshold*100)}%)')
+
+    # -------------------------------------------------------------------------
+    # Legend: two-part
+    #   Part 1 — Mach colors (auto-collected above via mach_label)
+    #   Part 2 — Theory linestyles (manually constructed proxy artists)
+    # -------------------------------------------------------------------------
+    from matplotlib.lines import Line2D
+
+    linestyle_handles = [
+        Line2D([0], [0], color='gray', linestyle=ls, linewidth=1.8, label=lbl)
+        for _, ls, lbl, _ in theories
+    ]
+
+    # First legend: Mach colors (uses auto-collected handles)
+    leg1 = ax.legend(title='Mach', loc='upper right',
+                     frameon=True, framealpha=0.85, edgecolor='0.8')
+    ax.add_artist(leg1)   # keep leg1 when leg2 is added
+
+    # Second legend: linestyle = theory
+    ax.legend(handles=linestyle_handles, title='Theory',
+              loc='upper right', frameon=True, framealpha=0.85, edgecolor='0.8')
+
+    # -------------------------------------------------------------------------
+    # Axes formatting
+    # -------------------------------------------------------------------------
+    ax.set_xlabel('h/l')
+    ax.set_ylabel(r'$F_{\mathrm{RANS}} \;/\; F_{\mathrm{theory}}$')
+    ax.set_title('Scaled Axial Force vs h/l\n(Varying Mach Number)',
+                 fontweight='bold')
+    ax.set_xlim([min(h_l_values) - 0.005, max(h_l_values) + 0.005])
+    ax.grid(True, alpha=0.3)
+
+    plt.tight_layout()
+    plt.show()
+
+    # -------------------------------------------------------------------------
+    # Save
+    # -------------------------------------------------------------------------
+    if save:
+        dirc = (r'C:\Users\hhsabbah\Documents\01_Bladeless_Proj\35_Git'
+                r'\Supersonic-Bladeless-Turbine\SBTTD\reports\figures\Mach Study')
+        plt.savefig(rf'{dirc}\scaledAxialForce_vs_hl.png',
+                    dpi=600, bbox_inches='tight')
+        plt.savefig(rf'{dirc}\scaledAxialForce_vs_hl.pdf',
+                    bbox_inches='tight')
+
+    return fig, ax    
     
     
     

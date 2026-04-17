@@ -1300,6 +1300,13 @@ def smallPertSolver(h_l_values, ds_by_case, plotting = False):
 
 
 
+
+
+
+
+
+
+
 #%% Small perturbation theory with shock - expansion theory ###
 
 
@@ -3506,5 +3513,1018 @@ def generate_axial_force_plot_dual_mach(df, first_shock_pressures,
     
 
 
+#%% Small pertub new 
 
-    
+
+# ============================================================================
+# HELPER: Separation-aware pressure distribution
+# ============================================================================
+
+def build_presep_pressure(x_wall, P_wall_SE, x_sep_first, sep_length_nonDim,
+                           sep_threshold=0.60):
+    """
+    Build a physically-motivated wall pressure distribution that accounts
+    for flow separation.
+
+    WHEN TO USE THIS (Physics reasoning):
+    ======================================
+    Both SPT and SE assume fully ATTACHED inviscid flow. When the boundary
+    layer separates, the real pressure field diverges from these predictions:
+
+        - Before separation (0 → x_sep): flow is attached → SE is valid
+        - After separation (x_sep → end): a recirculation bubble sits on
+          the wall. Classical SBLI (Shock/Boundary Layer Interaction) theory
+          shows the pressure in a separated bubble is approximately CONSTANT
+          at the "plateau pressure" — the value at the separation point.
+          The flow is no longer doing work on the sinusoidal geometry;
+          it's going over the top of the bubble.
+
+    So the axial force integral only gets a real contribution from the
+    pre-separation region.
+
+    Parameters
+    ----------
+    x_wall : np.ndarray
+        x-coordinates of the wall points
+    P_wall_SE : np.ndarray
+        Shock-expansion wall pressure at each x [Pa]
+    x_sep_first : float or None
+        x-location of the first separation point [m].
+        If None (no separation detected), returns P_wall_SE unchanged.
+    sep_length_nonDim : float
+        Non-dimensional separation length = sep_length / domain_length.
+        Only applies the model if this exceeds sep_threshold.
+    sep_threshold : float
+        Fraction of domain beyond which separation is considered "large".
+        Default 0.20 (20%).
+
+    Returns
+    -------
+    P_presep : np.ndarray
+        Modified wall pressure:
+          - Below sep threshold OR no separation → identical to P_wall_SE
+          - Above sep threshold → SE up to x_sep, then plateau constant
+    is_separated : bool
+        True if the separation model was applied
+    """
+
+    # If separation is small or absent, return unchanged
+    if x_sep_first is None or sep_length_nonDim <= sep_threshold:
+        return P_wall_SE.copy(), False
+
+    P_presep = P_wall_SE.copy()
+
+    # Find the index closest to x_sep_first
+    # np.searchsorted gives us the insertion point, which is the first index
+    # PAST the separation point — we want the last attached index.
+    i_sep = np.searchsorted(x_wall, x_sep_first)
+    i_sep = np.clip(i_sep, 1, len(x_wall) - 1)
+
+    # Plateau pressure = SE pressure at the separation point
+    # This is the "frozen" pressure the separated bubble maintains.
+    # Using i_sep - 1 ensures we're still in the attached region.
+    P_plateau = P_wall_SE[i_sep - 1]
+
+    # Apply plateau from separation point onward
+    P_presep[i_sep:] = P_plateau
+
+    return P_presep, True
+
+
+# ============================================================================
+# MODIFIED: smallPertSolver_combined  (only the changes are shown below)
+#   — add sep_length_nonDim and x_sep as arguments
+#   — add separation routing logic inside the Mach loop
+# ============================================================================
+
+def smallPertSolver_combined(h_l_values, ds_by_case,
+                             sep_length_nonDim, x_sep,      # NEW arguments
+                             plotting=False):
+    """
+    Solver that computes and compares ALL THREE predictions:
+        1. Small Perturbation Theory (SPT)
+        2. Shock-Expansion Theory (SE)
+        3. Combined SPT + SE
+        4. NEW: Separation-aware SE (for largely-separated cases)
+
+    NEW Parameters
+    --------------
+    sep_length_nonDim : dict
+        {case_key: float} — non-dimensional separation length from find_sepLength()
+    x_sep : dict
+        {case_key: np.ndarray} — array of separation x-locations per case
+
+    Returns
+    -------
+    axialForceScaled : dict          F_RANS / F_smallPert
+    axialForceScaled_SE : dict       F_RANS / F_shockExpansion
+    axialForceScaled_combined : dict F_RANS / F_combined (sep-aware for high sep)
+    """
+
+    results_list = []
+    axialForceScaled         = {}
+    axialForceScaled_SE      = {}
+    axialForceScaled_combined = {}
+
+    for k, h_l in enumerate(h_l_values):
+        N = 1
+        l = 0.1
+        h = h_l * l
+        num_of_points = 1000
+
+        lam = l / (2 * N + 1) * 2
+        x_wave = np.linspace(0, l, num_of_points)
+        y_wave = h * np.sin(2 * np.pi * x_wave / lam)
+
+        x_variable = sp.Symbol('x_variable')
+        y_variable = sp.Symbol('y_variable')
+        h_variable = sp.Symbol('h_variable')
+        l_variable = sp.Symbol("l_variable")
+        y_equation = h_variable * sp.sin((2 * sp.pi * x_variable) / lam)
+
+        M_infty_range = np.arange(1.5, 4.5, 0.5)
+
+        for M_infty in M_infty_range:
+
+            case_key = f"h_l_{h_l:.2f}_Mach_{M_infty:.1f}"
+            if case_key not in ds_by_case:
+                print(f"Skipping: {case_key} not found")
+                continue
+
+            # ----------------------------------------------------------------
+            # Flow conditions (unchanged from your original)
+            # ----------------------------------------------------------------
+            B      = M_infty**2 - 1
+            gamma  = 1.4
+            R_gas  = 287
+
+            flow_results = isentropic_solver("m", M_infty)
+            P_P0 = flow_results[1]
+            T_T0 = flow_results[3]
+
+            T0 = 300
+            P0 = 1e6
+            T_infty   = T_T0 * T0
+            p_infty   = P_P0 * P0
+            rho_infty = p_infty / (R_gas * T_infty)
+            a_infty   = np.sqrt(gamma * R_gas * T_infty)
+            V_infty   = a_infty * M_infty
+
+            # ----------------------------------------------------------------
+            # Symbolic SPT setup (unchanged)
+            # ----------------------------------------------------------------
+            dy_dx            = sp.diff(y_equation, x_variable)
+            V_infty_variable = sp.Symbol("V_infty_variable")
+            B_variable       = sp.Symbol("B_variable")
+            C                = sp.Symbol('C')
+
+            dphi_dy_wall     = dy_dx * V_infty_variable
+            df_dx            = dphi_dy_wall / -sp.sqrt(B_variable)
+            f_indefinite     = sp.integrate(df_dx, x_variable) + C
+            phi_xy           = sp.simplify(f_indefinite).subs(
+                                   x_variable, x_variable - B_variable * y_variable)
+            phi_xy_general   = phi_xy
+            phi_xy_wall      = phi_xy_general.subs(y_variable, 0)
+            dphi_dx          = sp.diff(phi_xy_general, x_variable)
+
+            Cp               = (-2 / V_infty_variable) * dphi_dx
+            Cp_wall          = Cp.subs(y_variable, 0)
+
+            y_wall_func      = sp.lambdify(
+                                   x_variable,
+                                   y_equation.subs([(h_variable, h), (l_variable, l)]),
+                                   'numpy')
+            Cp_wall_func     = sp.lambdify(
+                                   (x_variable, h_variable, l_variable,
+                                    V_infty_variable, B_variable),
+                                   Cp_wall, 'numpy')
+
+            # ----------------------------------------------------------------
+            # RANS wall data (unchanged)
+            # ----------------------------------------------------------------
+            x_wall_RANS = ds_by_case[case_key]["X"].data
+            mask_rans   = (0 < x_wall_RANS) & (x_wall_RANS < l)
+            P_wall_RANS = ds_by_case[case_key]["P"].data[mask_rans]
+            y_wall_RANS = ds_by_case[case_key]["Y"].data[mask_rans]
+            x_wall_RANS = x_wall_RANS[mask_rans]
+
+            # ----------------------------------------------------------------
+            # Theory 1: Small Perturbation (unchanged)
+            # ----------------------------------------------------------------
+            x_wall_th       = np.linspace(0, l, len(P_wall_RANS))
+            y_wall_th       = y_wall_func(x_wall_th)
+            Cp_wall_results = Cp_wall_func(x_wall_th, h, l, V_infty, B)
+            P_wall_SP       = Cp_wall_results * 0.5 * rho_infty * V_infty**2 + p_infty
+
+            # ----------------------------------------------------------------
+            # Theory 2: Shock-Expansion (unchanged)
+            # ----------------------------------------------------------------
+            P_wall_SE, SE_result = shock_expansion_wall_pressure(
+                x_wall_th, y_wall_th, M_infty, p_infty, gamma
+            )
+
+            # ----------------------------------------------------------------
+            # Theory 3: Combined SPT + SE (unchanged)
+            # ----------------------------------------------------------------
+            P_wall_combined, _ = combined_wall_pressure(
+                x_wall_th, P_wall_SP, P_wall_SE, p_infty
+            )
+
+            # ----------------------------------------------------------------
+            # NEW: Separation-aware routing
+            # ----------------------------------------------------------------
+            # Retrieve separation data for this case. Use .get() with safe
+            # defaults so the code doesn't crash on unseen cases.
+            sep_nd   = sep_length_nonDim.get(case_key, 0.0)
+            x_sep_arr = np.asarray(x_sep.get(case_key, [])).ravel()
+
+            # First separation x-location (smallest x in the array, if any)
+            # np.min on an empty array raises — guard with size check.
+            x_sep_first = float(np.min(x_sep_arr)) if x_sep_arr.size > 0 else None
+
+            # Decide which "combined" pressure to use for force integration:
+            #
+            #   sep_nd <= 0.20  → use normal combined (SPT+SE blend)
+            #                     The flow is mostly attached; both theories
+            #                     are capturing the right physics.
+            #
+            #   sep_nd >  0.20  → use separation-aware SE
+            #                     The analytical theories are predicting work
+            #                     done on flow that has LEFT the wall. Replace
+            #                     post-separation pressure with the plateau.
+            #
+            P_wall_final, is_separated = build_presep_pressure(
+                x_wall_th, P_wall_SE, x_sep_first, sep_nd, sep_threshold=0.20
+            )
+
+            if is_separated:
+                print(f"[SEP MODEL] {case_key}: sep_nd={sep_nd:.3f} "
+                      f"→ plateau from x={x_sep_first:.4f} m")
+
+            # ----------------------------------------------------------------
+            # Force computation
+            # ----------------------------------------------------------------
+            R_torque = 0
+
+            hl_RANS     = compute_torque_2D_norm(x_wall_RANS, y_wall_RANS, P_wall_RANS,  R_torque)
+            hl_SP       = compute_torque_2D_norm(x_wall_th,   y_wall_th,   P_wall_SP,    R_torque)
+            hl_SE       = compute_torque_2D_norm(x_wall_th,   y_wall_th,   P_wall_SE,    R_torque)
+            hl_combined = compute_torque_2D_norm(x_wall_th,   y_wall_th,   P_wall_final, R_torque)
+
+            axialForce_RANS     = hl_RANS['F_theta']
+            axialForce_SP       = hl_SP['F_theta']
+            axialForce_SE       = hl_SE['F_theta']
+            axialForce_combined = hl_combined['F_theta']
+
+            # ----------------------------------------------------------------
+            # Scaling: F_RANS / F_theory  (→ 1.0 means perfect agreement)
+            # ----------------------------------------------------------------
+            axialForceScaled[case_key] = axialForce_RANS / axialForce_SP
+
+            axialForceScaled_SE[case_key] = (
+                axialForce_RANS / axialForce_SE if axialForce_SE != 0 else np.nan
+            )
+            axialForceScaled_combined[case_key] = (
+                axialForce_RANS / axialForce_combined if axialForce_combined != 0 else np.nan
+            )
+
+            # ----------------------------------------------------------------
+            # Plotting
+            # ----------------------------------------------------------------
+            if plotting:
+                fig, axes = plt.subplots(1, 3, figsize=(18, 6))
+                fig.suptitle(case_key, fontsize=14)
+
+                # Panel 1: Pressure comparison
+                ax1 = axes[0]
+                ax1.plot(x_wall_RANS, P_wall_RANS,  'k-',  lw=3,   label="RANS")
+                ax1.plot(x_wall_th,   P_wall_SP,     'b--', lw=2.5, label="Small Pert")
+                ax1.plot(x_wall_th,   P_wall_SE,     'r-.',  lw=2.5, label="Shock-Exp")
+                ax1.plot(x_wall_th,   P_wall_final,  'g:',   lw=2.5,
+                         label="Sep-aware SE" if is_separated else "Combined")
+
+                # Mark separation point if applied
+                if is_separated and x_sep_first is not None:
+                    ax1.axvline(x=x_sep_first, color='orange', lw=1.5,
+                                linestyle='--', label=f'$x_{{sep}}$={x_sep_first:.3f}m')
+
+                ax1.set_title(r"$P_{wall}$ comparison", fontsize=13)
+                ax1.set_xlabel("X [m]")
+                ax1.set_ylabel(r"$P_{wall}$ [Pa]")
+                ax1.grid(True, alpha=0.3)
+                ax1.legend(fontsize=9)
+
+                # Panel 2: % error vs RANS
+                ax2 = axes[1]
+                P_diff_SP  = np.abs(P_wall_RANS - P_wall_SP)   / P_wall_RANS * 100
+                P_diff_SE  = np.abs(P_wall_RANS - P_wall_SE)   / P_wall_RANS * 100
+                P_diff_fin = np.abs(P_wall_RANS - P_wall_final) / P_wall_RANS * 100
+
+                ax2.plot(x_wall_th, P_diff_SP,  'b--', lw=2, label="Small Pert error")
+                ax2.plot(x_wall_th, P_diff_SE,  'r-.', lw=2, label="Shock-Exp error")
+                ax2.plot(x_wall_th, P_diff_fin, 'g:',  lw=2,
+                         label="Sep-aware error" if is_separated else "Combined error")
+
+                if is_separated and x_sep_first is not None:
+                    ax2.axvline(x=x_sep_first, color='orange', lw=1.5,
+                                linestyle='--', alpha=0.7)
+
+                ax2.set_title(r"$|P_{theory} - P_{RANS}|$ / $P_{RANS}$ [%]", fontsize=13)
+                ax2.set_xlabel("X [m]")
+                ax2.set_ylabel("Error [%]")
+                ax2.set_xlim([0, l])
+                ax2.grid(True, alpha=0.3)
+                ax2.legend(fontsize=9)
+
+                # Panel 3: Local Mach from SE + separation annotation
+                ax3 = axes[2]
+                ax3.plot(SE_result.x, SE_result.Mach, 'r-', lw=2)
+                ax3.axhline(y=M_infty, ls='--', color='gray', alpha=0.5,
+                            label=f'$M_\\infty$ = {M_infty}')
+                ax3.axhline(y=1.0, ls=':', color='black', alpha=0.3, label='M=1')
+
+                if is_separated and x_sep_first is not None:
+                    ax3.axvline(x=x_sep_first, color='orange', lw=1.5,
+                                ls='--', label=f'$x_{{sep}}$')
+                    label_y = ax3.get_ylim()[1] * 0.95 if ax3.get_ylim()[1] > 0 else 1.0
+                    ax3.text(x_sep_first + 0.002, label_y,
+                             f'sep={sep_nd*100:.0f}%', fontsize=8, color='darkorange')
+
+                ax3.set_title("Local Mach (Shock-Expansion)", fontsize=13)
+                ax3.set_xlabel("X [m]")
+                ax3.set_ylabel("Mach")
+                ax3.grid(True, alpha=0.3)
+                ax3.legend(fontsize=9)
+
+                plt.tight_layout()
+                plt.show()
+
+            # ----------------------------------------------------------------
+            # Results table
+            # ----------------------------------------------------------------
+            results_list.append({
+                'h/l':                       h_l,
+                'M_infty':                   M_infty,
+                'F_axial_RANS [N/m]':        axialForce_RANS,
+                'F_axial_SmallPert [N/m]':   axialForce_SP,
+                'F_axial_SE [N/m]':          axialForce_SE,
+                'F_axial_combined [N/m]':    axialForce_combined,
+                'sep_nonDim':                sep_nd,
+                'sep_model_used':            is_separated,
+                'Diff_SmallPert [%]': (1 - axialForce_RANS / axialForce_SP)   * 100,
+                'Diff_SE [%]':        (1 - axialForce_RANS / axialForce_SE)    * 100
+                                      if axialForce_SE != 0 else np.nan,
+                'Diff_combined [%]':  (1 - axialForce_RANS / axialForce_combined) * 100
+                                      if axialForce_combined != 0 else np.nan,
+                'Case_Key':                  case_key
+            })
+
+        df_results = pd.DataFrame(results_list)
+
+    return axialForceScaled, axialForceScaled_SE, axialForceScaled_combined
+
+
+
+
+def smallPertSolver_sepAware(h_l_values, ds_by_case,
+                              sep_length_nonDim, x_sep,
+                              sep_threshold=0.20,
+                              plotting=False):
+    """
+    Separation-aware Small Perturbation Theory solver.
+
+    LOGIC:
+    ======
+    - sep_nonDim <= sep_threshold : use full SPT pressure distribution
+                                    → F_RANS / F_SPT  (theory is valid, flow attached)
+    - sep_nonDim >  sep_threshold : use SPT up to x_sep_first, then plateau pressure
+                                    → F_RANS / F_(SPT+plateau)
+                                    (beyond separation, SPT predicts a flow that has
+                                    left the wall — replace with plateau pressure at
+                                    the separation point, same as build_presep_pressure
+                                    but feeding P_wall_SP instead of P_wall_SE)
+
+    Parameters
+    ----------
+    h_l_values : array-like
+        h/l values to sweep
+    ds_by_case : dict
+        RANS dataset dictionary
+    sep_length_nonDim : dict
+        {case_key: float} from find_sepLength()
+    x_sep : dict
+        {case_key: np.ndarray} separation x-locations from find_sepLength()
+    sep_threshold : float
+        Fraction of domain above which separation model activates. Default 0.20.
+    plotting : bool
+        Whether to show per-case comparison plots.
+
+    Returns
+    -------
+    axialForceScaled_SPT_sep : dict
+        {case_key: F_RANS / F_SPT_sepAware}
+    """
+
+    results_list = []
+    axialForceScaled_SPT_sep = {}
+
+    for k, h_l in enumerate(h_l_values):
+
+        # Geometry
+        N   = 1
+        l   = 0.1
+        h   = h_l * l
+        lam = l / (2 * N + 1) * 2
+
+        # Symbolic setup — SPT only
+        x_variable = sp.Symbol('x_variable')
+        y_variable = sp.Symbol('y_variable')
+        h_variable = sp.Symbol('h_variable')
+        l_variable = sp.Symbol('l_variable')
+        V_infty_variable = sp.Symbol('V_infty_variable')
+        B_variable       = sp.Symbol('B_variable')
+        C                = sp.Symbol('C')
+
+        y_equation = h_variable * sp.sin((2 * sp.pi * x_variable) / lam)
+
+        dy_dx        = sp.diff(y_equation, x_variable)
+        dphi_dy_wall = dy_dx * V_infty_variable
+        df_dx        = dphi_dy_wall / -sp.sqrt(B_variable)
+        f_indefinite = sp.integrate(df_dx, x_variable) + C
+        phi_xy       = sp.simplify(f_indefinite).subs(
+                           x_variable, x_variable - B_variable * y_variable)
+        phi_xy_wall  = phi_xy.subs(y_variable, 0)
+        dphi_dx      = sp.diff(phi_xy.subs(y_variable, 0), x_variable)
+        Cp_wall      = (-2 / V_infty_variable) * dphi_dx
+
+        y_wall_func  = sp.lambdify(
+                           x_variable,
+                           y_equation.subs([(h_variable, h), (l_variable, l)]),
+                           'numpy')
+        Cp_wall_func = sp.lambdify(
+                           (x_variable, h_variable, l_variable,
+                            V_infty_variable, B_variable),
+                           Cp_wall, 'numpy')
+
+        M_infty_range = np.arange(1.5, 4.5, 0.5)
+
+        for M_infty in M_infty_range:
+
+            case_key = f"h_l_{h_l:.2f}_Mach_{M_infty:.1f}"
+            if case_key not in ds_by_case:
+                print(f"Skipping: {case_key} not found")
+                continue
+
+            # Flow conditions
+            B       = M_infty**2 - 1
+            gamma   = 1.4
+            R_gas   = 287
+
+            flow_results = isentropic_solver("m", M_infty)
+            P_P0    = flow_results[1]
+            T_T0    = flow_results[3]
+            T0      = 300
+            P0      = 1e6
+            T_infty   = T_T0 * T0
+            p_infty   = P_P0 * P0
+            rho_infty = p_infty / (R_gas * T_infty)
+            a_infty   = np.sqrt(gamma * R_gas * T_infty)
+            V_infty   = a_infty * M_infty
+
+            # RANS wall data
+            x_wall_RANS = ds_by_case[case_key]["X"].data
+            mask_rans   = (0 < x_wall_RANS) & (x_wall_RANS < l)
+            P_wall_RANS = ds_by_case[case_key]["P"].data[mask_rans]
+            y_wall_RANS = ds_by_case[case_key]["Y"].data[mask_rans]
+            x_wall_RANS = x_wall_RANS[mask_rans]
+
+            # SPT pressure on analytical wall grid
+            x_wall_th       = np.linspace(0, l, len(P_wall_RANS))
+            y_wall_th       = y_wall_func(x_wall_th)
+            Cp_wall_results = Cp_wall_func(x_wall_th, h, l, V_infty, B)
+            P_wall_SP       = Cp_wall_results * 0.5 * rho_infty * V_infty**2 + p_infty
+
+            # ------------------------------------------------------------------
+            # Separation data for this case
+            # ------------------------------------------------------------------
+            sep_nd    = sep_length_nonDim.get(case_key, 0.0)
+            x_sep_arr = np.asarray(x_sep.get(case_key, [])).ravel()
+            x_sep_first = float(np.min(x_sep_arr)) if x_sep_arr.size > 0 else None
+
+            # ------------------------------------------------------------------
+            # Build the pressure used for force integration
+            #
+            # TEACHING POINT:
+            # build_presep_pressure is called with P_wall_SP (not P_wall_SE).
+            # This keeps the model purely within SPT — the plateau value is
+            # P_SP(x_sep), i.e. whatever pressure SPT predicts right at the
+            # separation point. This is the most internally consistent choice:
+            # you are not mixing theories, just acknowledging that SPT's
+            # sinusoidal distribution beyond x_sep acts on a wall the flow
+            # has left.
+            # ------------------------------------------------------------------
+            P_wall_final, is_separated = build_presep_pressure(
+                x_wall_th, P_wall_SP, x_sep_first, sep_nd,
+                sep_threshold=sep_threshold
+            )
+
+            if is_separated:
+                print(f"[SPT+SEP] {case_key}: sep_nd={sep_nd:.3f} "
+                      f"→ SPT plateau from x={x_sep_first:.4f} m")
+
+            # Force integration
+            R_torque = 0
+            hl_RANS  = compute_torque_2D_norm(x_wall_RANS, y_wall_RANS,
+                                               P_wall_RANS,  R_torque)
+            hl_final = compute_torque_2D_norm(x_wall_th,   y_wall_th,
+                                               P_wall_final, R_torque)
+
+            axialForce_RANS  = hl_RANS['F_theta']
+            axialForce_final = hl_final['F_theta']
+
+            axialForceScaled_SPT_sep[case_key] = (
+                axialForce_RANS / axialForce_final
+                if axialForce_final != 0 else np.nan
+            )
+
+            # ------------------------------------------------------------------
+            # Plotting
+            # ------------------------------------------------------------------
+            if plotting:
+                fig, axes = plt.subplots(1, 2, figsize=(12, 5))
+                fig.suptitle(case_key, fontsize=13)
+
+                # Panel 1: pressure comparison
+                ax1 = axes[0]
+                ax1.plot(x_wall_RANS, P_wall_RANS, 'k-',  lw=3,   label='RANS')
+                ax1.plot(x_wall_th,   P_wall_SP,   'b--', lw=2,   label='SPT (full)')
+                ax1.plot(x_wall_th,   P_wall_final,'g:',  lw=2.5,
+                         label='SPT+plateau' if is_separated else 'SPT (no sep)')
+
+                if is_separated and x_sep_first is not None:
+                    ax1.axvline(x=x_sep_first, color='orange', lw=1.5,
+                                ls='--', label=f'$x_{{sep}}$ = {x_sep_first:.3f} m')
+
+                ax1.set_xlabel('X [m]')
+                ax1.set_ylabel(r'$P_{wall}$ [Pa]')
+                ax1.set_title(r'$P_{wall}$ comparison')
+                ax1.legend(fontsize=9)
+                ax1.grid(True, alpha=0.3)
+
+                # Panel 2: % error vs RANS
+                ax2 = axes[1]
+                P_diff_SP    = np.abs(P_wall_RANS - P_wall_SP)    / P_wall_RANS * 100
+                P_diff_final = np.abs(P_wall_RANS - P_wall_final) / P_wall_RANS * 100
+
+                ax2.plot(x_wall_th, P_diff_SP,    'b--', lw=2, label='SPT error')
+                ax2.plot(x_wall_th, P_diff_final, 'g:',  lw=2,
+                         label='SPT+plateau error' if is_separated else 'SPT error')
+
+                if is_separated and x_sep_first is not None:
+                    ax2.axvline(x=x_sep_first, color='orange', lw=1.5,
+                                ls='--', alpha=0.7)
+
+                ax2.set_xlabel('X [m]')
+                ax2.set_ylabel('Error [%]')
+                ax2.set_title(r'$|P_{theory} - P_{RANS}|$ / $P_{RANS}$ [%]')
+                ax2.set_xlim([0, l])
+                ax2.legend(fontsize=9)
+                ax2.grid(True, alpha=0.3)
+
+                plt.tight_layout()
+                plt.show()
+
+            results_list.append({
+                'h/l':                    h_l,
+                'M_infty':                M_infty,
+                'F_axial_RANS [N/m]':     axialForce_RANS,
+                'F_axial_SPT_sep [N/m]':  axialForce_final,
+                'sep_nonDim':             sep_nd,
+                'sep_model_used':         is_separated,
+                'Diff [%]': (1 - axialForce_RANS / axialForce_final) * 100
+                             if axialForce_final != 0 else np.nan,
+                'Case_Key':               case_key
+            })
+
+    return axialForceScaled_SPT_sep    
+
+
+#### theta-beta-mach function # 
+from scipy.optimize import brentq
+import numpy as np
+
+def theta_beta_M(theta_deg, M, gamma=1.4):
+    """
+    Solve for shock wave angle beta given deflection angle theta and Mach number.
+
+    Parameters
+    ----------
+    theta_deg : float
+        Wall deflection angle in DEGREES
+    M : float
+        Upstream Mach number
+    gamma : float
+        Ratio of specific heats (default 1.4)
+
+    Returns
+    -------
+    beta_deg : float
+        Shock wave angle in DEGREES (weak shock solution)
+    """
+    theta_rad = np.radians(theta_deg)
+    mu = np.arcsin(1.0 / M)
+
+    def residual(beta):
+        num = 2.0 * (M**2 * np.sin(beta)**2 - 1.0) / np.tan(beta)
+        den = M**2 * (gamma + np.cos(2.0 * beta)) + 2.0
+        return np.arctan(num / den) - theta_rad
+
+    beta_rad = brentq(residual, mu + 1e-6, np.pi/2 - 1e-6)
+    return np.degrees(beta_rad)
+
+
+
+#### Prandtl meyer function in python ####
+def prandtl_meyer(M, gamma=1.4):
+    """
+    Compute the Prandtl-Meyer function nu(M).
+
+    Parameters
+    ----------
+    M : float or np.ndarray
+        Mach number (must be >= 1)
+    gamma : float
+        Ratio of specific heats (default 1.4)
+
+    Returns
+    -------
+    nu_deg : float or np.ndarray
+        Prandtl-Meyer angle in DEGREES
+    """
+    nu_rad = (np.sqrt((gamma + 1) / (gamma - 1)) *
+              np.arctan(np.sqrt((gamma - 1) / (gamma + 1) * (M**2 - 1))) -
+              np.arctan(np.sqrt(M**2 - 1)))
+
+    return np.degrees(nu_rad)
+
+#### Shock expansion theory model (SE) ### 
+import numpy as np
+import numpy as np
+from scipy.optimize import brentq
+
+
+
+def SE_model(h_l_values, x, y, gamma=1.4, plot=False):
+
+    M_infty_range = np.arange(1.5, 4.5, 0.5)
+    M_array_dict = {}
+
+    for k, h_l in enumerate(h_l_values):
+        for M_infty in M_infty_range:
+            case_key = f"h_l_{h_l:.2f}_Mach_{M_infty:.1f}"
+            x_run = x[case_key]
+            y_run = y[case_key]
+
+            dy_dx = np.gradient(y_run, x_run)
+            theta_geom_deg = np.degrees(np.arctan(dy_dx))
+            dtheta = np.diff(theta_geom_deg)
+
+            compression = dtheta > 0
+            expansion   = dtheta < 0
+
+            M_array = np.full(len(x_run), np.nan)
+            M_array[0] = M_infty
+            M_local = M_infty
+
+            for i in range(len(dtheta)):
+
+                if compression[i]:
+                    beta_deg  = theta_beta_M(dtheta[i], M_local)
+                    beta_rad  = np.radians(beta_deg)
+                    theta_rad = np.radians(dtheta[i])
+                    M1n       = M_local * np.sin(beta_rad)
+                    M2n       = np.sqrt((M1n**2 + 2/(gamma - 1)) /
+                                       (2*gamma/(gamma - 1) * M1n**2 - 1))
+                    M_local   = M2n / np.sin(beta_rad - theta_rad)
+
+                elif expansion[i]:
+                    nu_current = prandtl_meyer(M_local)
+                    nu_new     = nu_current + dtheta[i]
+
+                    if nu_new <= 0:
+                        print(f"Warning: SE theory invalid at i={i}, x={x_run[i]:.4f} m — "
+                              f"nu_new={nu_new:.4f}°. Likely separation point.")
+                    else:
+                        M_local = brentq(lambda M: prandtl_meyer(M) - nu_new, 1.0 + 1e-6, 50.0)
+
+                M_array[i+1] = M_local
+
+            M_array_dict[case_key] = M_array
+
+            if plot:
+                fig, axes = plt.subplots(2, 1, figsize=(10, 6), sharex=True)
+                fig.suptitle(case_key, fontsize=13, fontproperties={'family': 'Times New Roman'})
+
+                axes[0].plot(x_run, theta_geom_deg, color='darkorange', lw=1.8)
+                axes[0].axhline(0, color='k', lw=0.8, ls='--')
+                axes[0].set_ylabel('θ [°]', font='Times New Roman')
+                axes[0].grid(True, ls='--', alpha=0.4)
+
+                axes[1].plot(x_run, M_array, color='steelblue', lw=1.8)
+                axes[1].axhline(M_infty, color='k', lw=0.8, ls='--', label=f'M∞ = {M_infty}')
+                axes[1].set_ylabel('Local Mach [-]', font='Times New Roman')
+                axes[1].set_xlabel('x [m]', font='Times New Roman')
+                axes[1].legend(prop={'family': 'Times New Roman'})
+                axes[1].grid(True, ls='--', alpha=0.4)
+
+                plt.tight_layout()
+                plt.show()
+
+    return M_array_dict
+
+
+def SE_first_shock(h_l_values, x, y, gamma=1.4, plot=False):
+
+    M_infty_range = np.arange(1.5, 4.5, 0.5)
+    first_shock_dict = {}
+
+    for k, h_l in enumerate(h_l_values):
+        for M_infty in M_infty_range:
+            case_key = f"h_l_{h_l:.2f}_Mach_{M_infty:.1f}"
+            x_run = x[case_key]
+            y_run = y[case_key]
+
+            dy_dx          = np.gradient(y_run, x_run)
+            theta_geom_deg = np.degrees(np.arctan(dy_dx))
+
+            M_array    = np.full(len(x_run), np.nan)
+            M_array[0] = M_infty
+            M_local    = M_infty
+            beta_shock = None
+            x_shock    = None
+            y_shock    = None
+
+            # Track the flow angle — starts horizontal (freestream)
+            theta_flow = 0.0
+
+            for i in range(len(x_run) - 1):
+
+                theta_wall = theta_geom_deg[i+1]   # wall angle at next point
+                dtheta     = theta_wall - theta_flow  # how much wall deviates from flow
+
+                if dtheta > 0:      # wall turns into flow → compression
+                    beta_deg  = theta_beta_M(dtheta, M_local)
+                    beta_rad  = np.radians(beta_deg)
+                    theta_rad = np.radians(dtheta)
+                    M1n       = M_local * np.sin(beta_rad)
+                    M2n       = np.sqrt((M1n**2 + 2/(gamma - 1)) /
+                                       (2*gamma/(gamma - 1) * M1n**2 - 1))
+                    M_local   = M2n / np.sin(beta_rad - theta_rad)
+
+                    # Flow now follows the wall after the shock
+                    theta_flow = theta_wall
+
+                    if beta_shock is None:
+                        beta_shock = beta_deg
+                        x_shock    = x_run[i]
+                        y_shock    = y_run[i]
+
+                elif dtheta < 0:    # wall turns away from flow → expansion
+                    nu_current = prandtl_meyer(M_local)
+                    nu_new     = nu_current + abs(dtheta)   # expansion increases nu
+
+                    if nu_new <= 0:
+                        print(f"{case_key}: stopped at i={i}, x={x_run[i]:.4f} m")
+                        M_array[i+1:] = np.nan
+                        break
+
+                    M_local    = brentq(lambda M: prandtl_meyer(M) - nu_new, 1.0 + 1e-6, 50.0)
+                    theta_flow = theta_wall
+
+                M_array[i+1] = M_local
+
+            first_shock_dict[case_key] = {
+                'M_array'   : M_array,
+                'beta_shock': beta_shock,
+                'x_shock'   : x_shock,
+            }
+
+            if plot:
+                fig, axes = plt.subplots(2, 1, figsize=(10, 6), sharex=True)
+                fig.suptitle(case_key, fontsize=13,
+                             fontproperties={'family': 'Times New Roman'})
+
+                axes[0].plot(x_run, y_run, color='steelblue', lw=1.8)
+                if x_shock is not None:
+                    shock_length  = (y_run.max() - y_run.min()) * 3
+                    beta_rad_plot = np.radians(beta_shock)
+                    x_shock_end   = x_shock + shock_length / np.tan(beta_rad_plot)
+                    y_shock_end   = y_shock + shock_length
+                    axes[0].plot([x_shock, x_shock_end], [y_shock, y_shock_end],
+                                 color='firebrick', lw=1.8, ls='--',
+                                 label=f'β = {beta_shock:.2f}°')
+                    axes[0].legend(prop={'family': 'Times New Roman'})
+                axes[0].set_ylabel('y [m]', font='Times New Roman')
+                axes[0].grid(True, ls='--', alpha=0.4)
+
+                axes[1].plot(x_run, M_array, color='steelblue', lw=1.8)
+                axes[1].axhline(M_infty, color='k', lw=0.8, ls='--', label=f'M∞ = {M_infty}')
+                axes[1].set_ylabel('Local Mach [-]', font='Times New Roman')
+                axes[1].set_xlabel('x [m]', font='Times New Roman')
+                axes[1].legend(prop={'family': 'Times New Roman'})
+                axes[1].grid(True, ls='--', alpha=0.4)
+
+                plt.tight_layout()
+                plt.show()
+
+    return first_shock_dict
+
+
+def SE_first_shock_single(case_key, x, y, gamma=1.4, plot=False):
+
+    x_run = x[case_key]
+    y_run = y[case_key]
+
+    # Parse M_infty from case key
+    M_infty = float(case_key.split('Mach_')[1])
+
+    dy_dx          = np.gradient(y_run, x_run)
+    theta_geom_deg = np.degrees(np.arctan(dy_dx))
+
+    M_array    = np.full(len(x_run), np.nan)
+    M_array[0] = M_infty
+    M_local    = M_infty
+    beta_shock = None
+    x_shock    = None
+    y_shock    = None
+    theta_flow = 0.0
+
+    for i in range(len(x_run) - 1):
+
+        theta_wall = theta_geom_deg[i+1]
+        dtheta     = theta_wall - theta_flow
+
+        if dtheta > 0:
+            theta_max = np.degrees(max_deflection_angle(M_local, gamma))
+            if dtheta > theta_max:
+                print(f"{case_key}: shock detachment at i={i}, x={x_run[i]:.4f} m "
+                      f"(dtheta={dtheta:.2f}° > theta_max={theta_max:.2f}°)")
+                M_array[i+1:] = np.nan
+                break
+
+            beta_deg  = theta_beta_M(dtheta, M_local)
+            beta_rad  = np.radians(beta_deg)
+            theta_rad = np.radians(dtheta)
+            M1n       = M_local * np.sin(beta_rad)
+            M2n       = np.sqrt((M1n**2 + 2/(gamma - 1)) /
+                                (2*gamma/(gamma - 1) * M1n**2 - 1))
+            M_local   = M2n / np.sin(beta_rad - theta_rad)
+            theta_flow = theta_wall
+
+            if beta_shock is None:
+                beta_shock = beta_deg
+                x_shock    = x_run[i]
+                y_shock    = y_run[i]
+
+        elif dtheta < 0:
+            nu_current = prandtl_meyer(M_local)
+            nu_new     = nu_current + abs(dtheta)
+
+            if nu_new <= 0:
+                print(f"{case_key}: stopped at i={i}, x={x_run[i]:.4f} m")
+                M_array[i+1:] = np.nan
+                break
+
+            M_local    = brentq(lambda M: prandtl_meyer(M) - nu_new, 1.0 + 1e-6, 50.0)
+            theta_flow = theta_wall
+
+        M_array[i+1] = M_local
+
+    result = {
+        'M_array'   : M_array,
+        'beta_shock': beta_shock,
+        'x_shock'   : x_shock,
+    }
+
+    if plot:
+        fig, axes = plt.subplots(2, 1, figsize=(10, 6), sharex=True)
+        fig.suptitle(case_key, fontsize=13,
+                     fontproperties={'family': 'Times New Roman'})
+
+        axes[0].plot(x_run, y_run, color='steelblue', lw=1.8)
+        if x_shock is not None:
+            shock_length  = (y_run.max() - y_run.min()) * 3
+            beta_rad_plot = np.radians(beta_shock)
+            x_shock_end   = x_shock + shock_length / np.tan(beta_rad_plot)
+            y_shock_end   = y_shock + shock_length
+            axes[0].plot([x_shock, x_shock_end], [y_shock, y_shock_end],
+                         color='firebrick', lw=1.8, ls='--',
+                         label=f'β = {beta_shock:.2f}°')
+            axes[0].legend(prop={'family': 'Times New Roman'})
+        axes[0].set_ylabel('y [m]', font='Times New Roman')
+        axes[0].grid(True, ls='--', alpha=0.4)
+
+        axes[1].plot(x_run, M_array, color='steelblue', lw=1.8)
+        axes[1].axhline(M_infty, color='k', lw=0.8, ls='--', label=f'M∞ = {M_infty}')
+        axes[1].set_ylabel('Local Mach [-]', font='Times New Roman')
+        axes[1].set_xlabel('x [m]', font='Times New Roman')
+        axes[1].legend(prop={'family': 'Times New Roman'})
+        axes[1].grid(True, ls='--', alpha=0.4)
+
+        plt.tight_layout()
+        plt.show()
+
+    return result, dtheta
+
+
+
+
+
+def SE_axial_force_comparison(h_l_values, x, y, ds_by_case, gamma=1.4, plot=False):
+    """
+    Computes axial force from SE_first_shock Mach results and compares to RANS.
+
+    Uses isentropic relations to convert local Mach → wall pressure,
+    then integrates with compute_torque_2D_norm.
+    """
+
+    M_infty_range = np.arange(1.5, 4.5, 0.5)
+    results_list  = []
+    l = 0.1
+
+    for k, h_l in enumerate(h_l_values):
+        for M_infty in M_infty_range:
+            case_key = f"h_l_{h_l:.2f}_Mach_{M_infty:.1f}"
+
+            if case_key not in ds_by_case:
+                print(f"Skipping {case_key} — not in ds_by_case")
+                continue
+
+            # ── RANS wall data ────────────────────────────────────────────
+            x_wall_RANS = ds_by_case[case_key]["X"].data
+            mask        = (0 < x_wall_RANS) & (x_wall_RANS < l)
+            x_wall_RANS = x_wall_RANS[mask]
+            y_wall_RANS = ds_by_case[case_key]["Y"].data[mask]
+            P_wall_RANS = ds_by_case[case_key]["P"].data[mask]
+            p_inf       = P_wall_RANS[0]
+
+            # ── SE first shock Mach array ─────────────────────────────────
+            first_shock_dict = SE_first_shock([h_l], x, y, gamma=gamma, plot=False)
+            M_array          = first_shock_dict[case_key]['M_array']
+            x_run            = x[case_key]
+            y_run            = y[case_key]
+
+            # ── Convert Mach → pressure via isentropic relation ───────────
+            p0        = p_inf * (1 + (gamma - 1) / 2 * M_infty**2) ** (gamma / (gamma - 1))
+            P_wall_SE = p0 * (1 + (gamma - 1) / 2 * M_array**2) ** (-gamma / (gamma - 1))
+
+            # ── Axial force ───────────────────────────────────────────────
+            R      = 0
+            F_RANS = compute_torque_2D_norm(x_wall_RANS, y_wall_RANS, P_wall_RANS, R)['F_theta']
+
+            # Only integrate over non-NaN region (up to separation point)
+            valid     = ~np.isnan(P_wall_SE)
+            F_SE      = compute_torque_2D_norm(x_run[valid], y_run[valid], P_wall_SE[valid], R)['F_theta']
+
+            diff_pct  = (1 - F_SE / F_RANS) * 100 if F_RANS != 0 else np.nan
+
+            results_list.append({
+                'case_key'          : case_key,
+                'h/l'               : h_l,
+                'M_infty'           : M_infty,
+                'F_axial_RANS [N/m]': F_RANS,
+                'F_axial_SE [N/m]'  : F_SE,
+                'Difference [%]'    : diff_pct,
+            })
+
+            if plot:
+                fig, axes = plt.subplots(1, 2, figsize=(12, 5))
+                fig.suptitle(case_key, fontsize=13,
+                             fontproperties={'family': 'Times New Roman'})
+
+                # --- Panel 1: wall pressure comparison ---
+                axes[0].plot(x_wall_RANS, P_wall_RANS,       'k-',  lw=2,   label='RANS')
+                axes[0].plot(x_run,       P_wall_SE,          'r--', lw=1.8, label='Shock-Expansion')
+                axes[0].set_xlabel('x [m]',        font='Times New Roman')
+                axes[0].set_ylabel('P [Pa]',        font='Times New Roman')
+                axes[0].set_title('Wall Pressure',  font='Times New Roman')
+                axes[0].legend(prop={'family': 'Times New Roman'})
+                axes[0].grid(True, ls='--', alpha=0.4)
+
+                # --- Panel 2: axial force bar comparison ---
+                axes[1].bar(['RANS', 'Shock-Expansion'], [F_RANS, F_SE],
+                            color=['steelblue', 'firebrick'], width=0.4)
+                axes[1].set_ylabel('F_axial [N/m]', font='Times New Roman')
+                axes[1].set_title(f'Axial Force  |  Δ = {diff_pct:.1f}%',
+                                  font='Times New Roman')
+                axes[1].grid(True, ls='--', alpha=0.4, axis='y')
+
+                plt.tight_layout()
+                plt.show()
+
+    df_results = pd.DataFrame(results_list)
+    return df_results
+
+
+
+
