@@ -24,8 +24,8 @@ os.chdir(new_dirc)
 # In your notebook/script, run this FIRST:
 import utils.plotting
 from utils.parameterComputation import variableImporterMasked, ReCompute, yplusThreshold
-from utils.dataload_util import assign_dir, bigImport, runSaver, runLoader, file_pathFinder, load_minfo_step_force
-from utils.plotting import plotter, plotter_multi_all, plotter_multiPerCase, subplotter, plot_scaled_axialForce_vs_hl,plot_BL_thickness,plot_BL_location_tecplot,plot_BL_thickness_subplots, plot_mach_contours_per_hl, plot_viscous_vs_inviscid_contours, subplotter_multiPerCase, load_mcfd_info1 , load_mcfd_net_mass_flux, export_mach_contours,  plot_BL_and_separation_contours, plot_dpdx_before_sep_contour, plot_dpdx_before_sep_3D, plot_total_pressure_loss, plot_total_pressure_loss_3D, plot_power_vs_pressure_loss, plot_power_vs_pressure_loss_3D, plot_theta_max_occurrence, plot_mach_wave_coalescence_SE
+from utils.dataload_util import assign_dir, bigImport, runSaver, runLoader, file_pathFinder, load_minfo_step_force, Import_choice_3D
+from utils.plotting import plotter, plotter_multi_all, plotter_multiPerCase, subplotter, plot_scaled_axialForce_vs_hl,plot_BL_thickness,plot_BL_location_tecplot,plot_BL_thickness_subplots, plot_mach_contours_per_hl, plot_viscous_vs_inviscid_contours, subplotter_multiPerCase, load_mcfd_info1 , load_mcfd_net_mass_flux, export_mach_contours,  plot_BL_and_separation_contours, plot_dpdx_before_sep_contour, plot_dpdx_before_sep_3D, plot_total_pressure_loss, plot_total_pressure_loss_3D, plot_power_vs_pressure_loss, plot_power_vs_pressure_loss_3D, plot_theta_max_occurrence, plot_mach_wave_coalescence_SE    
 from utils.models import analyze_geometries, get_first_shock_pressures, offsetGeomPoints, smallPertSolver, find_sepLength, max_min_finder,mach_vs_sepLength, smallPertSolver_with_SE, smallPertSolver_combined, compute_power_2D , compute_force_2D , compute_torque_2D_norm , load_csv_data, load_tecplot_data, generate_torque_table_mach , compute_torque_2D_norm, generate_axial_force_plot_mach, generate_axial_force_plot_dual_mach, create_axial_force_dataframe, smallPertSolver_sepAware, SE_model,SE_first_shock, SE_axial_force_comparison,SE_first_shock_single
 
 
@@ -47,7 +47,7 @@ ds_by_case, ds_by_case_quad, ds_by_case_inlet = bigImport(base_dir,fileName)
 
 #%% Importing processed data ###
 
-ds_by_case,ds_by_case_quad, ds_by_case_inlet = runLoader(load_dir_dic = r"C:\Users\hhsabbah\Documents\01_Bladeless_Proj\35_Git\Supersonic-Bladeless-Turbine\SBTTD\data\processed\Mach Study") 
+ds_by_case,ds_by_case_quad, ds_by_case_inlet = runLoader(load_dir_dic = r"C:\Users\hhsabbah\Documents\01_Bladeless_Proj\35_Git\Supersonic-Bladeless-Turbine\SBTTD\data\processed\P0 Study") 
 
 
 
@@ -2082,9 +2082,16 @@ def get_mach_normal(gamma, mach1):
         (mach1**2 + 2/(gamma - 1))/(2 * gamma * mach1**2/(gamma - 1) - 1)
         )
 
+def isentropic_pressure(M, p0, gamma=1.4):
+    return p0 * (1 + (gamma - 1) / 2 * M**2) ** (-gamma / (gamma - 1))
+
+
+
+
+
 
 # Defining some variable # 
-temp_key = "h_l_0.02_Mach_4.0"
+temp_key = "h_l_0.05_Mach_3.0"
 
 
 # Finding the discrete angles # 
@@ -2093,19 +2100,35 @@ y_run = y[temp_key]
 M_inlet_run = np.mean(mach_inlet[temp_key])
 
 
+# Getting physical quantities from the RANS solution # 
+M_run = mach[temp_key]
+P_run = P[temp_key]
+gamma = 1.4
+
+# Getting quantities needed for Shock-Expansion Theory # 
+
+# Get p0 from inlet conditions
+P_inlet = np.mean(P_run[0:10])  # or however you extract inlet static pressure
+p0 = P_inlet * (1 + (gamma - 1) / 2 * M_inlet_run**2) ** (gamma / (gamma - 1))
+
+
+
+
 # Discretizing the domain # 
 dy_dx = np.gradient(y_run, x_run)
 delta_nus = np.degrees(np.arctan(dy_dx)) * -1 # To have the same nomenclature as compressible flow, where negative refers to compressiona and positive angle refers to exapnsion
-delta_nus_diff = np.diff(abs(delta_nus))
+delta_nus_diff = np.diff(delta_nus)
 
 
 # Finding the Mach number and the angle for each discrete line # 
 Mach_all = np.zeros(len(delta_nus_diff)+1)
 theta_all = np.zeros(len(delta_nus_diff))
+P_all = np.zeros(len(delta_nus_diff)+1)
+
 
 # Defining the boundary condition (the inlet mach number to the array) #
 Mach_all[0] = M_inlet_run
-gamma = 1.4 
+P_all[0] = isentropic_pressure(Mach_all[0], p0, gamma)
 
 
 
@@ -2118,95 +2141,56 @@ for idx, delta in enumerate(delta_nus_diff):
         nu_1_comp = get_prandtl_meyer(Mach_all[idx],gamma)
         nu_2_comp = nu_1_comp + delta * np.pi/180
         
-        # Solving for the Mach number # 
+        # Getting the Mach number and pressure after compression # 
         Mach_all[idx+1] = brentq(solve_prandtl_meyer, 1.001, 50, args=(nu_2_comp, gamma))
-     
+        P_all[idx+1] = isentropic_pressure(Mach_all[idx+1], p0, gamma)
+
     # Expansion # 
-    elif delta < 0: 
-        nu_1_exp = 28 * np.pi / 180 # Assuming that the flow statrs from sonic. Assumption is made to solve the closed form equation
+    elif delta > 0: 
+        #nu_1_exp = 28 * np.pi / 180 # Assuming that the flow statrs from sonic. Assumption is made to solve the closed form equation
+        nu_1_exp = get_prandtl_meyer(Mach_all[idx], gamma)
         nu_2_exp = nu_1_exp + delta * np.pi/180
         
-        # Getting the Mach number After the expansion # 
+        # Getting the Mach number and pressure after the expansion # 
         Mach_all[idx+1] = brentq(solve_prandtl_meyer, 1.001, 50, args = (nu_2_exp,gamma))
-        
+        P_all[idx+1] = isentropic_pressure(Mach_all[idx+1], p0, gamma)
+
     # Neither #    
     elif delta == 0:
         Mach_all[idx+1] = Mach_all[idx]
         
         
         
-print(Mach_all)
 
-
-#%%
-
-
-# Plotting the Mach number Vs X and Y Vs X on the same plot for comparison # 
-Mach_all_mod = Mach_all[~(np.isnan(Mach_all)) | (Mach_all==0)]
-
-masked = len(Mach_all_mod)
-
+# Plotting the results compared to the Wavy Geometry # 
 fig,ax1 = plt.subplots()
-ax1.plot(x_run[0:masked],Mach_all_mod)
+ax1.plot(x_run,Mach_all)
 
 ax1.set_xlabel("X[m]")
 ax1.set_ylabel("Mach")
 
 
 ax2 = ax1.twinx()
-ax2.plot(x_run[0:masked],y_run[0:masked], color = "red")
+ax2.plot(x_run,y_run, color = "red")
 plt.grid()
 
 ax2.set_ylabel("Y[m]")
 plt.show()
 
-#%%
-# Plotting results # 
-fig, (ax_top, ax_bot) = plt.subplots(2, 1, figsize=(10, 6), sharex=True)
 
-ax_top.plot(x_run, y_run, 'k-')
-ax_top.set_ylabel('y [m]')
-ax_top.grid(True)
-
-ax_bot.plot(x_run, delta_geom_deg, 'b-')
-ax_bot.axhline(0, color='gray', linestyle='--')
-ax_bot.set_xlabel('x [m]')
-ax_bot.set_ylabel('δ [deg]')
-ax_bot.grid(True)
-
-fig.suptitle(temp_key)
-plt.tight_layout()
-plt.show()
+# Plotting the RANS solution Vs the Shock-Expansion Solution # 
+plt.plot(x_run,P_all,label = "ROM")
+plt.plot(x_run,P_run, label = "RANS")
+plt.xlabel("X[m]")
+plt.ylabel("Pressure [Pa]")
+plt.legend()
+plt.grid()
 
 
 
 
 
 
-#%%
-
-# Defining inlet parameters #
-gamma = 1.4
-M1 = 2.40
-delta = 20 * np.pi/180
-
-
-# Root scalar ---> solving the oblique theta # 
-root = root_scalar(
-    solve_oblique_theta, x0=40*np.pi/180, x1=50*np.pi/180,
-    args=(delta, M1, gamma)
-    )
-
-# Getting theta # 
-theta = root.root
-print(f'Theta: {theta * 180/np.pi: .2f}°')
-
-
-# Getting the next Mach number value # 
-M1n = M1 * np.sin(theta)
-M2n = get_mach_normal(gamma, M1n)
-M2 = M2n / np.sin(theta - delta)
-print(f'M2: {M2: .3f}')
 
 
 
@@ -3243,9 +3227,478 @@ if __name__ == "__main__":
     
     
    
+#%% Comparing CFD to Experiments ###
+
+"""
+#------------------------------------------------------------------------------------------------------------------------------------#
+                                                Comparing CFD to Experiments 
+#------------------------------------------------------------------------------------------------------------------------------------#
+"""
+import os
+import tecplot as tp
+from tecplot.constant import PlotType, SliceSource
+# Defining values #
+base_dir = Path(rf"{assign_dir()}")
+fileName = "mcfd_tec.bin"
+
+
+# Defining names @# 
+h_l_name = "h_l_0.02_3D"
+sec_name1 = "Section"
+main_name2 = "BRICK_cells"
+inlet_name3 = "Inlet"
+
+
+
+# Re-creating the active frame #
+tp.new_layout()
+
+
+
+
+# Finding the file paths with a specific extension #
+file_paths = list(base_dir.glob("**/*.bin"))
+
+# Extracting variables from tecplot # 
+test = tp.data.load_tecplot(file_paths[0].as_posix())
+
+
+# Extracting Values from Certain Zones #
+section_zone = test.zone(sec_name1)
+
+# Defining the active frame #
+act_frame = tp.active_frame().plot()
+
+
+
+# Showing Slice # 
+extracted_slice = extracted_slice = tp.data.extract.extract_slice(
+    origin=(0, 0, 0),
+    normal=(0, 0, 1),
+    source=SliceSource.SurfaceZones,
+    zones = sec_name1,
+    dataset=test)
 
 
 
 
 
-   
+# All variable names in the dataset
+var_names = [v.name for v in test.variables()]
+
+
+#### Extracting Variables from Section Zone ####
+
+# Build dict: {var_name: numpy_array}
+data3D = {}
+for var in var_names:
+    try:
+        data3D[var] = extracted_slice.values(test.variable(var)).as_numpy_array()
+    except Exception as e:
+        print(f"Skipping {var}: not found")
+
+
+
+#%%
+# Step 1: Set 3D and extract
+frame = tp.active_frame()
+frame.plot_type = PlotType.Cartesian3D
+
+section_zone = test.zone(sec_name1)
+
+extracted_slice = tp.data.extract.extract_slice(
+    origin=(0, 0, 0),
+    normal=(0, 0, 1),
+    source=SliceSource.SurfacesOfVolumeZones,
+    zones=[section_zone],
+    dataset=test
+)
+
+# Step 2: Read data directly from the extracted slice zone
+var_names = [v.name for v in test.variables()]
+data3D = {}
+for var in var_names:
+    try:
+        data3D[var] = extracted_slice.values(test.variable(var)).as_numpy_array()
+    except:
+        print(f"Skipping {var}")
+#%%
+
+# Extracting that data #
+x_test = data3D["X"]
+y_test = data3D["Y"]
+P_test = data3D["P"]
+sort_idx = np.argsort(x_test)
+
+
+
+
+# Re-formatting the data so it starts from zero # 
+x_test = x_test[sort_idx] 
+y_test = y_test[sort_idx]
+y_test = y_test 
+P_test = P_test[sort_idx]
+
+
+# Keep only the wavy section X range
+x_min, x_max = 0.14, 0.24   # <-- adjust these to your wavy wall bounds
+mask = (x_test >= x_min) & (x_test <= x_max)
+
+x_test = x_test[mask] - np.min(x_test[mask])
+y_test = y_test[mask]
+P_test = P_test[mask]
+
+# Plotting the data # 
+plt.plot(x_test, P_test)
+plt.show()
+
+
+
+
+
+#%%
+
+# All variable names in the dataset
+var_names = [v.name for v in test.variables()]
+
+
+# Build dict: {var_name: numpy_array}
+data = {}
+for var in var_names:
+    try:
+        data[var] = section_zone.values(test.variable(var)).as_numpy_array()
+    except Exception as e:
+        print(f"Skipping {var}: not found")
+    
+ 
+#%%
+h_l_name = "h_l_0.02_3D"
+sec_name1 = "Secton"
+main_name2 = "BRICK_cells"
+inlet_name3 = "Inlet"
+
+h_l_0_02_3D_sec, h_l_0_02_3D_quad, h_l_0_02_3D_inlet = Import_choice_3D(base_dir,fileName , h_l_name, sec_name1 , main_name2, inlet_name3)
+
+
+
+
+#%%
+
+
+
+# Using the .dat data from 3D case #
+import re
+import matplotlib.pyplot as plt
+
+input_file = r"C:\Users\hhsabbah\Documents\01_Bladeless_Proj\01_CFD Simulations\26_Planar Nozzle Simulations M = 1.6\Nozzle Design 3 (Further Down Geom)\4_Solution\midPlane.dat"
+
+# ---- Step 1: Parse header for variable names and find where data starts ----
+variables = []
+n_points = 0
+data_start = 0
+
+with open(input_file, 'r') as f:
+    lines = f.readlines()
+
+for i, line in enumerate(lines):
+    s = line.strip()
+
+    # Collect variable names (each in quotes, one per line)
+    match = re.match(r'^(?:VARIABLES\s*=\s*)?"([^"]+)"', s)
+    if match:
+        variables.append(match.group(1))
+
+    # Ordered zone: point count from I=
+    i_match = re.search(r'I=(\d+)', s)
+    if i_match:
+        n_points = int(i_match.group(1))
+
+    # FE zone: point count from Nodes=
+    n_match = re.search(r'Nodes=(\d+)', s)
+    if n_match:
+        n_points = int(n_match.group(1))
+
+    # DT= line marks end of header
+    if s.startswith('DT='):
+        data_start = i + 1
+        break
+
+# ---- Step 2: Read node data into data3D dictionary ----
+data3D = {v: [] for v in variables}
+
+for j in range(data_start, data_start + n_points):
+    vals = lines[j].split()
+    for v, val in zip(variables, vals):
+        data3D[v].append(float(val))
+
+# ---- Step 3: Filter to X range [0.14, 0.24] ----
+indices = [i for i, x in enumerate(data3D['X']) if 0.14 <= x <= 0.24]
+
+for v in variables:
+    data3D[v] = [data3D[v][i] for i in indices]
+
+# ---- Step 4: Sort by X ----
+sorted_indices = sorted(range(len(data3D['X'])), key=lambda i: data3D['X'][i])
+
+for v in variables:
+    data3D[v] = [data3D[v][i] for i in sorted_indices]
+
+# ---- Step 5: Zero-shift X ----
+x_min = data3D['X'][0]
+data3D['X'] = [x - x_min for x in data3D['X']]
+
+# ---- Step 6: Plot ----
+fig, ax = plt.subplots(figsize=(10, 5))
+ax.plot(data3D['X'], data3D['P'], 'b-o', markersize=3)
+ax.set_xlabel('X (m)')
+ax.set_ylabel('Pressure (Pa)')
+ax.set_title('X vs Pressure — Filtered & Zero-Shifted')
+ax.grid(True, alpha=0.3)
+plt.tight_layout()
+plt.savefig('x_vs_pressure.png', dpi=200)
+plt.show()
+
+
+#%%
+
+# Comparing 2D case with experimental results # 
+# Comparing 2D case with experimental results #
+import csv
+import matplotlib.pyplot as plt
+
+# ---- Step 1: Read CSV ----
+data = {}
+with open(r'C:\Users\hhsabbah\Documents\01_Bladeless_Proj\38_Experimental Data\h_l_0.02\P_tap_results_Test8.csv', 'r') as f:
+    reader = csv.reader(f)
+    headers = next(reader)
+    for h in headers:
+        data[h] = []
+    for row in reader:
+        for h, val in zip(headers, row):
+            data[h].append(float(val))
+
+# ---- Step 2: Build time array ----
+t0_s = data['FTime[s]'][0]
+t0_ns = data['FTime[ns]'][0]
+time = [(data['FTime[s]'][i] - t0_s) + (data['FTime[ns]'][i] - t0_ns) * 1e-9
+        for i in range(len(data['Frame']))]
+
+# ---- Step 3: Find run window using P02 threshold ----
+p02 = data['SN1051-P02']
+threshold = 0.3
+run_start = None
+run_end = None
+for i in range(len(p02)):
+    if p02[i] > threshold and run_start is None:
+        run_start = i
+    if p02[i] > threshold:
+        run_end = i
+
+margin = 100
+ss_start = run_start + margin
+ss_end = run_end - margin
+
+# ---- Step 4: Time-average during steady state (skip P01 = nozzle exit) ----
+p_sensors = [h for h in headers if h.startswith('SN1051-P') and h != 'SN1051-P01']
+
+BAR_TO_PA = 1e5
+P_ATM = 101325  # Pa
+SENSOR_SPACING = 7.25e-3  # 7.25 mm between each sensor
+
+# X positions: P02 starts at x=0, each sensor is 7.25 mm apart
+x_exp = [i * SENSOR_SPACING for i in range(len(p_sensors))]
+
+# Compute steady-state means and stds in absolute Pa
+p_exp = []    # <-- absolute pressure in Pa, ready for CFD comparison
+p_std = []    # <-- standard deviation in Pa
+
+for s in p_sensors:
+    ss_vals = data[s][ss_start:ss_end+1]
+    mean_bar = sum(ss_vals) / len(ss_vals)
+    std_bar = (sum((v - mean_bar)**2 for v in ss_vals) / len(ss_vals)) ** 0.5
+    p_exp.append(mean_bar * BAR_TO_PA + P_ATM)
+    p_std.append(std_bar * BAR_TO_PA)
+
+# ---- Step 5: Plot ----
+fig, axes = plt.subplots(2, 1, figsize=(10, 8))
+
+# Top: Pressure vs X
+ax1 = axes[0]
+ax1.errorbar(x_exp, p_exp, yerr=p_std, fmt='ro-', markersize=6, capsize=4,
+             label='Experimental (Mean +/- 1 std)')
+ax1.axhline(P_ATM, color='k', linewidth=0.5, linestyle='--', alpha=0.5, label='P_atm')
+ax1.set_xlabel('X (m)')
+ax1.set_ylabel('Absolute Pressure (Pa)')
+ax1.set_title('Pressure vs X Along Wavy Wall (Close Case)')
+ax1.grid(True, alpha=0.3)
+ax1.legend()
+
+# Bottom: time traces
+ax2 = axes[1]
+for s in p_sensors[:6]:
+    trace_abs = [v * BAR_TO_PA + P_ATM for v in data[s]]
+    ax2.plot(time, trace_abs, alpha=0.7, linewidth=0.5, label=s.replace('SN1051-',''))
+ax2.axvspan(time[ss_start], time[ss_end], alpha=0.15, color='green', label='Steady-state window')
+ax2.axhline(P_ATM, color='k', linewidth=0.5, linestyle='--')
+ax2.set_xlabel('Time (s)')
+ax2.set_ylabel('Absolute Pressure (Pa)')
+ax2.set_title('Time Traces with Steady-State Window')
+ax2.legend(fontsize=8, ncol=3)
+ax2.grid(True, alpha=0.3)
+
+plt.tight_layout()
+plt.savefig('pressure_vs_x_close.png', dpi=200)
+plt.show()
+
+# ================================================================
+# To overlay CFD data later, just add something like:
+#   ax1.plot(x_cfd, p_cfd, 'b-', label='CFD')
+# where x_cfd and p_cfd are your CFD arrays (same units: meters, Pa)
+# ================================================================
+
+
+#%%
+
+
+# Comparing 2D case with experimental results #
+import csv
+import matplotlib.pyplot as plt
+
+# ---- Step 1: Read CSV ----
+data = {}
+with open(r'C:\Users\hhsabbah\Documents\01_Bladeless_Proj\38_Experimental Data\h_l_0.02\P_tap_results_Test6.csv', 'r') as f:
+    reader = csv.reader(f)
+    headers = next(reader)
+    for h in headers:
+        data[h] = []
+    for row in reader:
+        for h, val in zip(headers, row):
+            data[h].append(float(val))
+
+# ---- Step 2: Build time array ----
+t0_s = data['FTime[s]'][0]
+t0_ns = data['FTime[ns]'][0]
+time = [(data['FTime[s]'][i] - t0_s) + (data['FTime[ns]'][i] - t0_ns) * 1e-9
+        for i in range(len(data['Frame']))]
+
+# ---- Step 3: Identify sensors ----
+# P01 = nozzle exit, P02 = nozzle region -> drop both
+# Wavy wall sensors start at P03
+all_p = [h for h in headers if h.startswith('SN1051-P')]
+drop = ['SN1051-P01', 'SN1051-P02']
+p_sensors = [s for s in all_p if s not in drop]
+
+# ---- Step 4: Find run window ----
+# Use first wavy wall sensor for detection, auto-threshold at 30% of max
+p_detect = data[p_sensors[0]]
+threshold = max(abs(v) for v in p_detect) * 0.3
+
+run_start = None
+run_end = None
+for i in range(len(p_detect)):
+    if abs(p_detect[i]) > threshold and run_start is None:
+        run_start = i
+    if abs(p_detect[i]) > threshold:
+        run_end = i
+
+margin = 100
+ss_start = run_start + margin
+ss_end = run_end - margin
+
+# ---- Step 5: Time-average during steady state ----
+BAR_TO_PA = 1e5
+P_ATM = 101325  # Pa
+SENSOR_SPACING = 7.2e-3  # 7.25 mm between each sensor
+
+# X positions: P03 starts at x=0, each sensor is 7.25 mm apart
+x_exp = [i * SENSOR_SPACING for i in range(len(p_sensors))]
+
+# Compute steady-state means and stds in absolute Pa
+p_exp = []    # <-- absolute pressure in Pa, ready for CFD comparison
+p_std = []    # <-- standard deviation in Pa
+
+for s in p_sensors:
+    ss_vals = data[s][ss_start:ss_end+1]
+    mean_bar = sum(ss_vals) / len(ss_vals)
+    std_bar = (sum((v - mean_bar)**2 for v in ss_vals) / len(ss_vals)) ** 0.5
+    p_exp.append(mean_bar * BAR_TO_PA + P_ATM)
+    p_std.append(std_bar * BAR_TO_PA)
+
+# ---- Step 6: Plot ----
+fig, axes = plt.subplots(2, 1, figsize=(10, 8))
+
+# Top: Pressure vs X
+ax1 = axes[0]
+ax1.errorbar(x_exp, p_exp, yerr=p_std, fmt='ro-', markersize=6, capsize=4,
+             label='Experimental (Mean +/- 1 std)')
+ax1.axhline(P_ATM, color='k', linewidth=0.5, linestyle='--', alpha=0.5, label='P_atm')
+ax1.set_xlabel('X (m)')
+ax1.set_ylabel('Absolute Pressure (Pa)')
+ax1.set_title('Pressure vs X Along Wavy Wall')
+ax1.grid(True, alpha=0.3)
+ax1.legend()
+
+# Bottom: time traces
+ax2 = axes[1]
+for s in p_sensors:
+    trace_abs = [v * BAR_TO_PA + P_ATM for v in data[s]]
+    ax2.plot(time, trace_abs, alpha=0.7, linewidth=0.5, label=s.replace('SN1051-',''))
+ax2.axvspan(time[ss_start], time[ss_end], alpha=0.15, color='green', label='Steady-state window')
+ax2.axhline(P_ATM, color='k', linewidth=0.5, linestyle='--')
+ax2.set_xlabel('Time (s)')
+ax2.set_ylabel('Absolute Pressure (Pa)')
+ax2.set_title('Time Traces with Steady-State Window')
+ax2.legend(fontsize=7, ncol=5)
+ax2.grid(True, alpha=0.3)
+plt.tight_layout()
+plt.savefig('pressure_vs_x.png', dpi=200)
+plt.show()
+
+# ================================================================
+# To overlay CFD data later, just add something like:
+#   ax1.plot(x_cfd, p_cfd, 'b-', label='CFD')
+# where x_cfd and p_cfd are your CFD arrays (same units: meters, Pa)
+# ================================================================
+
+
+#%%
+####% Comparing CFD with sensors #####
+# Set publication-quality parameters
+
+import matplotlib.pyplot as plt
+import matplotlib.cm as cm
+import matplotlib as mpl
+
+
+mpl.rcParams['font.family'] = 'serif'
+mpl.rcParams['font.serif'] = ['Times New Roman']  # Or 'DejaVu Serif'
+mpl.rcParams['font.size'] = 18  # Base font size
+mpl.rcParams['axes.labelsize'] = 18
+mpl.rcParams['axes.titlesize'] = 21
+mpl.rcParams['xtick.labelsize'] = 14
+mpl.rcParams['ytick.labelsize'] = 14
+mpl.rcParams['legend.fontsize'] = 12
+mpl.rcParams['figure.titlesize'] = 21
+
+# Line widths
+mpl.rcParams['axes.linewidth'] = 1
+mpl.rcParams['lines.linewidth'] = 1.5
+mpl.rcParams['grid.linewidth'] = 0.5
+
+# DPI for screen and saving
+mpl.rcParams['figure.dpi'] = 1200  # Screen display
+mpl.rcParams['savefig.dpi'] = 1200  # Save at high resolution
+
+
+temp_key = "h_l_0.02_p0_4bar"
+plt.plot(x[temp_key],P[temp_key], label = "2D CFD",linewidth = 2.5)
+#plt.scatter(x_exp,p_exp, label = "Experiment", color = "red")
+plt.errorbar(x_exp, p_exp, yerr=p_std, fmt='o', capsize=5, color = "red",label = "Experiment")
+plt.plot(data3D['X'], data3D['P'], label = "3D CFD", linewidth = 2.5)
+
+plt.title(f"$h/l \: 0.02$ Experiment Vs CFD")
+plt.xlabel("X[m]")
+plt.ylabel("Pressure [Pa]")
+
+plt.legend(bbox_to_anchor=(1,1))
+plt.grid()

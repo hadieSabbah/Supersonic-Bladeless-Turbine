@@ -173,7 +173,122 @@ def bigImport(base_dir,fileName):
     return ds_by_case, ds_by_case_quad, ds_by_case_inlet
 
 
+# This is a funciton that imports data, but gives you the choice to type out the zone name that you want to extract  # 
+def Import_choice_3D(base_dir,fileName , h_l_name, sec_name1 , main_name2, inlet_name3):
+    import os
+    import tecplot as tp
+    from tecplot.constant import PlotType, SliceSource
+    from utils.parameterComputation import variableImporterMasked
+    ##### Instructions #####
+    # h_l_name ---> define the h/l name that you want for this case. #
+    # sec_name1 ---> that's the name that you specified for the wavy section # 
+    # main_name 2 --> that's the anme that you specified for the main mesh. That would be quad_cells for 2D meshes and BRICK_cells for 3D meshes. #
+    # inlet_name3 --> the name of the inlet zone. Make sure that captilization is good for all names. Otherwise, an error will come up. #
+    ##### End of instrucitons ####
+    
 
+    # Finding the file paths with a specific extension #
+    file_paths = list(base_dir.glob("**/*.bin"))
+
+    # Extracting variables from tecplot # 
+    test = tp.data.load_tecplot(file_paths[0].as_posix())
+
+
+    # Extracting Values from Certain Zones #
+    section_zone = test.zone(sec_name1)
+
+    # Defining the active frame #
+    act_frame = tp.active_frame().plot()
+
+
+
+    # Extracting Slices  # 
+    extracted_slice = extracted_slice = tp.data.extract.extract_slice(
+        origin=(0, 0, 0),
+        normal=(0, 0, 1),
+        source=SliceSource.VolumeZones,
+        dataset=test)
+
+
+
+    # Getting the data from the extracted zone #
+    section_zone = test.zone(extracted_slice)
+
+
+    # All variable names in the dataset
+    var_names = [v.name for v in test.variables()]
+
+
+    #### Extracting Variables from Section Zone ####
+
+    # Build dict: {var_name: numpy_array}
+    data = {}
+    for var in var_names:
+        try:
+            data[var] = section_zone.values(test.variable(var)).as_numpy_array()
+        except Exception as e:
+            print(f"Skipping {var}: not found")
+
+    
+    
+
+    
+    
+    # Pre-Allocating dictionaries for each section # 
+    ds_by_case = {} 
+    ds_by_case_quad = {}
+    ds_by_case_inlet = {}         # key: case name (e.g., 'h_l_0.01_p0_1bar'), value: xarray.Dataset
+
+    
+    # Looping through each file path # 
+    for file_path in file_paths:
+        if not file_path.is_file():
+            continue
+    
+        # Load each case (you were loading only file_paths[0])
+        tp.new_layout() # Creating a new tecplot layout. 
+        test = tp.data.load_tecplot(file_path.as_posix())
+        
+        
+        # Extracting zones !!!! Should be less hardcoded. Works for now however.... # 
+        section_zone = test.zone(sec_name1)
+        cells_zone = test.zone(main_name2)
+        inlet_zone = test.zone(inlet_name3)
+        
+        # Getting all the variables available in the dataset with PyTecplot # 
+        var_names = [v.name for v in test.variables()]
+        
+        # Grab values into a plain dict
+        data = {}
+        data_cells = {}
+        data_inlet = {}
+        
+        # for loop to get all the Variabes in each section #
+        for var in var_names:
+            try:
+                data[var] = section_zone.values(test.variable(var)).as_numpy_array()
+                data_cells[var] = cells_zone.values(test.variable(var)).as_numpy_array()
+                data_inlet[var] = inlet_zone.values(test.variable(var)).as_numpy_array()
+            except Exception:
+                pass
+    
+        # Making a dataset for each case # 
+        ds_case = dict_to_ds_1d(data)
+        ds_case_quad = dict_to_ds_1d(data_cells)
+        ds_case_inlet = dict_to_ds_1d(data_inlet)
+        
+        # key by the folder name that contains the file, e.g. 'h_l_0.01_p0_1bar'
+        case_name = h_l_name
+        ds_by_case[case_name] = ds_case
+        ds_by_case_quad[case_name] = ds_case_quad
+        ds_by_case_inlet[case_name] = ds_case_inlet
+    
+
+            
+            
+            
+    
+    return ds_by_case, ds_by_case_quad, ds_by_case_inlet
 
 
 
