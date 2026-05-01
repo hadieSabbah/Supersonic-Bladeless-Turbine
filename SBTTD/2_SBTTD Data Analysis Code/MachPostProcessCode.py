@@ -3702,3 +3702,395 @@ plt.ylabel("Pressure [Pa]")
 
 plt.legend(bbox_to_anchor=(1,1))
 plt.grid()
+
+
+#%% Creating a code that automates 3D slicing extraction # 
+
+def expCleaner(dirc):
+    import re
+    import csv
+    # Getting all the headers # 
+    with open(dirc, 'r', encoding='utf8') as csv_file:
+        dict_reader = csv.DictReader(csv_file)
+        headers = dict_reader.fieldnames
+
+    # Getting the numerical data #
+    oldData = np.genfromtxt(dirc,delimiter = ',', skip_header = 1)
+    
+    # Cleaning structure for the header # 
+    pattern = re.compile(r'(SN\d+)-([PT])(\d+)')
+    sensor_map = {} 
+    
+    
+    for col_idx, header in enumerate(headers):
+        match = pattern.search(header)
+        if match:
+            serial = match.group(1)          # e.g. 'SN1051'
+            ch_type = match.group(2)         # 'P' or 'T'
+            ch_num  = int(match.group(3))    # e.g. 1, 6, 16
+            sensor_map[col_idx] = {
+                'serial': serial,
+                'type':   ch_type,
+                'channel': ch_num,
+                'header': header.strip()
+            }
+
+    # Identify metadata column indices (anything NOT matched by the pattern)
+    meta_idx  = [i for i in range(len(headers)) if i not in sensor_map]
+    meta_keys = [headers[i].strip() for i in meta_idx]
+    
+    # Identify the columns # 
+    p_cols = {v['channel']: k for k, v in sensor_map.items() if v['type'] == 'P'}
+    t_cols = {v['channel']: k for k, v in sensor_map.items() if v['type'] == 'T'}
+    
+    # Converting from nanoseconds to seconds # 
+    meta_raw = {k: oldData[:, i] for k, i in zip(meta_keys, meta_idx)}
+    
+    if 'FTime[ns]' in meta_raw:
+        meta_raw['FTime[s]_from_ns'] = meta_raw['FTime[ns]'] / 1e9
+
+    # Exporting the clean data # 
+    cleanData = {
+        'sensor_map' : sensor_map,                  # full column metadata
+        'meta'       : {k: oldData[:, i]            # Frame, FTime[s], FTime[ns]
+                        for k, i in zip(meta_keys, meta_idx)},
+        'P'          : {ch: oldData[:, col]          # pressure data, keyed by ch number
+                        for ch, col in sorted(p_cols.items())},
+        'T'          : {ch: oldData[:, col]          # temperature data, keyed by ch number
+                        for ch, col in sorted(t_cols.items())},
+    }
+
+    
+    return cleanData
+
+
+def detectTestWindow(cleanData, k_sigma=10, n_baseline=50):
+    
+
+    # ── Step 1: Auto-detect stagnation port (highest mean pressure) ────────
+    stag_ch = max(cleanData['P'], key=lambda ch: np.mean(cleanData['P'][ch]))
+    trigger = cleanData['P'][stag_ch]
+    print(f"  Trigger channel: P{stag_ch:02d}  (mean = {np.mean(trigger):.4f} Pa)")
+
+    # ── Step 2: Estimate pre-test noise floor from first n_baseline frames ─
+    baseline      = trigger[:n_baseline]
+    baseline_mean = np.mean(baseline)
+    baseline_std  = np.std(baseline, ddof=1)
+    threshold     = baseline_mean + k_sigma * baseline_std
+    print(f"  Baseline mean = {baseline_mean:.6f} Pa,  std = {baseline_std:.6f} Pa")
+    print(f"  Threshold     = {threshold:.6f} Pa  ({k_sigma}σ above baseline)")
+
+    # ── Step 3: Find first and last frame above threshold ──────────────────
+    above       = np.where(trigger > threshold)[0]   # all indices where tunnel is "on"
+
+    if len(above) == 0:
+        raise ValueError("No frames exceeded the threshold — check k_sigma or n_baseline.")
+
+    i_start = above[0]
+    i_end   = above[-1]
+
+    t = cleanData['meta']['FTime[s]']
+    t_start, t_end = t[i_start], t[i_end]
+    print(f"  Test window: frame {i_start} → {i_end}  "
+          f"({t_start:.3f}s → {t_end:.3f}s, duration = {t_end - t_start:.3f}s)")
+
+    return i_start, i_end, t_start, t_end
+
+
+def expPlotter(x_dict,y_dict,y_name,label_name, y_unit):
+    import matplotlib.pyplot as plt
+    import matplotlib as mpl
+    # Plotting results for each sensor # 
+    for key in y_dict.keys():
+        plt.plot(x_dict,y_dict[key], label = f"{label_name} = {key}") # Plotting temperature results while converting to Kelvin
+
+        
+    # Showing after the for loop... #  
+    mpl.rcParams['font.family'] = 'serif'
+    mpl.rcParams['font.serif'] = ['Times New Roman']  # Or 'DejaVu Serif'
+    mpl.rcParams['font.size'] = 18  # Base font size
+    mpl.rcParams['axes.labelsize'] = 18
+    mpl.rcParams['axes.titlesize'] = 21
+    mpl.rcParams['xtick.labelsize'] = 14
+    mpl.rcParams['ytick.labelsize'] = 14
+    mpl.rcParams['legend.fontsize'] = 12
+    mpl.rcParams['figure.titlesize'] = 21
+
+    # Line widths
+    mpl.rcParams['axes.linewidth'] = 1
+    mpl.rcParams['lines.linewidth'] = 1.5
+    mpl.rcParams['grid.linewidth'] = 0.5
+
+    # DPI for screen and saving
+    mpl.rcParams['figure.dpi'] = 1200  # Screen display
+    mpl.rcParams['savefig.dpi'] = 1200  # Save at high resolution
+    
+    # Plotting Results # 
+    plt.title(f"{y_name} Vs Time")
+    plt.xlabel("Time [sec]")
+    plt.ylabel(f"{y_name}[{y_unit}]")
+    plt.legend(bbox_to_anchor = (1.05,1))
+    plt.grid("minor")
+    plt.show()
+    return
+
+def expStatsP(cleanData, confidence=0.95):
+    from scipy import stats
+    i_start, i_end, _, _ = detectTestWindow(cleanData)
+
+    stats_out = {}
+    for ch, signal in cleanData['P'].items():
+
+        # ── Crop to test window only ───────────────────────────────────────
+        signal = signal[i_start : i_end + 1]
+
+        N      = len(signal)
+        mean   = np.mean(signal)
+        std    = np.std(signal, ddof=1)
+        sem    = std / np.sqrt(N)
+        t_crit  = stats.t.ppf((1 + confidence) / 2, df=N - 1)
+        ci     = t_crit * sem
+        
+        stats_out[ch] = {'mean': mean, 'std': std, 'sem': sem, 'CI_95': ci, 'N': N}
+
+
+    return stats_out
+
+
+
+def sliceExtractorWall(dirc):
+    import os
+    import numpy as np
+    import tecplot as tp
+    from tecplot.constant import PlotType, SliceSource
+    from tecplot.constant import PlotType, SliceSource, ExtractMode
+    from pathlib import Path
+    
+    
+    
+    # --- Load data if not already loaded ---
+    expected_title = Path(dirc).stem
+
+    try:
+        current_title = tp.active_frame().dataset.title
+        already_loaded = (current_title == expected_title)
+    except Exception:
+        already_loaded = False
+
+    if not already_loaded:
+        dataset = tp.data.load_tecplot(dirc)
+    else:
+        dataset = tp.active_frame().dataset
+
+    frame = tp.active_frame()
+    frame.plot_type = PlotType.Cartesian3D
+
+    # --- Extract slice at z=0 from wall surface zone only ---
+    extracted_zones = tp.data.extract.extract_slice(
+        origin=(0, 0, 0),
+        normal=(0, 0, 1),
+        source=SliceSource.SurfaceZones,
+        dataset=dataset,
+        zones=dataset.zone('Section'),
+        mode= ExtractMode.OneZonePerConnectedRegion)
+
+    # Pick the bottom wall (minimum mean Y)
+    wall_zone = min(extracted_zones, key=lambda z: z.values('Y').as_numpy_array().mean())
+    
+    x_wall = wall_zone.values('X').as_numpy_array()
+    p_wall = wall_zone.values('P').as_numpy_array()
+    T_wall = wall_zone.values('T').as_numpy_array()
+    
+    y_wall = wall_zone.values('Y').as_numpy_array()
+    
+    sort_idx = np.argsort(x_wall)
+    x_wall = x_wall[sort_idx]
+    y_wall = y_wall[sort_idx]
+    p_wall = p_wall[sort_idx]
+    T_wall = T_wall[sort_idx]
+
+
+    return x_wall, y_wall, p_wall, T_wall
+
+
+#%%
+
+
+
+
+
+
+# Getting the directories for all the experimental data that we have from each directory # 
+flatPlatePtap = Path(r"C:\Users\hhsabbah\Documents\01_Bladeless_Proj\22_Codes\2_Experimental code\1_Experimental Data\3_Flat Plate\1_Pressure Tabs\Scan.csv")
+h_l0_02PtapAngled = Path(r"C:\Users\hhsabbah\Documents\01_Bladeless_Proj\22_Codes\2_Experimental code\1_Experimental Data\2_0.02 Hl Ptap Angled\Test1.csv")
+h_l0_02Ptap = Path(r"C:\Users\hhsabbah\Documents\01_Bladeless_Proj\22_Codes\2_Experimental code\1_Experimental Data\4_h_l_0.02\P_tap_results_Test8.csv")
+
+# Process the experimental results #
+### With this data, the first column is the frame, second column is FTime[s], and third column is the time ###
+flatPlat_ExpData = expCleaner(flatPlatePtap)
+h_l0_02PtapAngled_ExpData = expCleaner(h_l0_02PtapAngled)
+h_l0_02Ptap_ExpData = expCleaner(h_l0_02Ptap)
+
+
+
+#%% FLAT PLATE POST PROCESSSING ####
+
+
+
+### Assigning all the variables ###
+# Flat Plate #
+t_full_flat = flatPlat_ExpData['meta']['FTime[s]'] + flatPlat_ExpData['meta']['FTime[ns]'] / 1e9
+t_elapsed_flat = t_full_flat - t_full_flat[0]
+P_flatExp = flatPlat_ExpData['P']
+T_flatExp = flatPlat_ExpData['T']
+P_flatExp_Pa = {}
+for key in flatPlat_ExpData['P'].keys():
+    P_flatExp_Pa[key] = flatPlat_ExpData['P'][key] * 101325
+expPlotter(t_elapsed_flat, P_flatExp, "Pressure", "P", "Pa")
+expPlotter(t_elapsed_flat, T_flatExp, "Temperature", "T", "C")
+
+# Plotting experimental results # 
+P_averaged_flat = expStatsP(flatPlat_ExpData)
+channels = sorted(P_averaged_flat.keys())[3:]
+means_flat    = [P_averaged_flat[ch]['mean']  for ch in channels]
+errors_flat   = [P_averaged_flat[ch]['CI_95'] for ch in channels]
+x_exp_length_flat = 7.25 * (np.arange(0,len(channels)))
+
+
+fig, ax = plt.subplots()
+ax.errorbar(x_exp_length_flat, means_flat, yerr=errors_flat, fmt='o', capsize=4)
+ax.set_xlabel('X[mm]')
+ax.set_ylabel('Pressure [Bar]')
+ax.axhline(y = 0, color = 'r', linestyle = '--', label = "Zero line")
+ax.set_title('Experimental Wall Pressure Vs X')
+plt.legend()
+plt.show()
+
+
+#%%
+
+# Plotting both experiments and CFD # 
+h_l_flatCFD = Path(r"C:\Users\hhsabbah\Documents\01_Bladeless_Proj\01_CFD Simulations\31_flatPlate\4_Solution\mcfd_tec.bin").as_posix()
+
+
+# Extracting CFD values from the slice # 
+x_wall_flat, y_wall_flat, P_wall_flat, T_wall_flat = sliceExtractorWall(h_l_flatCFD)
+
+
+####%#  Plotting results #####
+
+#%%
+# Defining bounds for mask # 
+x_min = 40
+x_max = 127
+
+
+# Apply mask # 
+mask          = (x_wall_flat >= x_min) & (x_wall_flat <= x_max)
+x_cfd_trimmedFlat = (x_wall_flat[mask]) - x_min   # shift to 0, convert to mm
+P_cfd_trimmedFlat = (P_wall_flat[mask] - 94748) / 1e5                    # gauge → bar
+
+
+
+# Plot #
+plt.plot(x_cfd_trimmedFlat, P_cfd_trimmedFlat / np.max(P_cfd_trimmedFlat), label="3D CFD", linewidth = 3)
+plt.errorbar(x_exp_length_flat, means_flat/ np.max(means_flat), yerr=errors_flat, fmt='o', capsize=4, label="Experiment", color = "red")
+plt.title("Pressure Vs X")
+plt.xlabel("X[mm]")
+plt.ylabel("P [bar]")
+plt.legend()
+plt.show()
+
+
+
+#%%
+# h_l0_02 Angled #
+t_full_h_l0_02Angled = h_l0_02PtapAngled_ExpData['meta']['FTime[s]'] + h_l0_02PtapAngled_ExpData['meta']['FTime[ns]'] / 1e9
+t_elapsed_h_l0_02Angled = t_full_h_l0_02Angled - t_full_h_l0_02Angled[0]
+P_h_l0_02AngledExp = h_l0_02PtapAngled_ExpData['P']
+T_h_l0_02AngledExp = h_l0_02PtapAngled_ExpData['T']
+P_h_l0_02AngledExp_Pa = {}
+for key in h_l0_02PtapAngled_ExpData['P'].keys():
+    P_h_l0_02AngledExp_Pa[key] = h_l0_02PtapAngled_ExpData['P'][key] * 101325
+expPlotter(t_elapsed_h_l0_02Angled, P_h_l0_02AngledExp, "Pressure", "P", "Pa")
+expPlotter(t_elapsed_h_l0_02Angled, T_h_l0_02AngledExp, "Temperature", "T", "C")
+
+
+# Plotting  experimental Results # 
+P_averaged_h_l0_02Angled = expStatsP(h_l0_02PtapAngled_ExpData)
+channels = np.array(sorted(P_averaged_h_l0_02Angled.keys())[3:]) 
+
+means    = [P_averaged_h_l0_02Angled[ch]['mean']  for ch in channels]
+errors   = [P_averaged_h_l0_02Angled[ch]['CI_95'] for ch in channels]
+x_exp_length = 5.65 * (np.arange(0,len(channels)) )
+fig, ax = plt.subplots()
+ax.errorbar(x_exp_length, means, yerr=errors, fmt='o', capsize=4)
+ax.set_xlabel('X[mm]')
+ax.set_ylabel('Pressure [Bar]')
+ax.set_title('Mean wall pressure with 95% CI')
+plt.show()
+
+# Printing relevant results # 
+print(x_exp_length)
+
+
+#%%
+
+# Plotting both experiments and CFD # 
+h_l_0_02Ang_CFDDirc = Path(r"C:\Users\hhsabbah\Documents\01_Bladeless_Proj\01_CFD Simulations\28_Angled Geometry Sims\1_Solutions\Case3\mcfd_tec.bin").as_posix()
+
+# Extracting CFD values from the slice # 
+x_wall_angled, y_wall_angled, P_wall_angled, T_wall_angled = sliceExtractorWall(h_l_0_02Ang_CFDDirc)
+
+
+#%%  Plotting results # 
+
+
+# Defining bounds for mask # 
+x_min = -0.005
+x_max = 0.0678  
+
+# Apply mask # 
+mask          = (x_wall_angled >= x_min) & (x_wall_angled <= x_max)
+x_cfd_trimmed = (x_wall_angled[mask] - x_wall_angled[mask][0]) * 1e3   # shift to 0, convert to mm
+P_cfd_trimmed = (P_wall_angled[mask] - 101325) / 1e5                    # gauge → bar
+
+
+
+# Plot #
+plt.plot(x_cfd_trimmed, P_cfd_trimmed, label="3D CFD", linewidth = 3)
+plt.errorbar(x_exp_length, means, yerr=errors, fmt='o', capsize=4, label="Experiment", color = "red")
+plt.title("Pressure Vs X")
+plt.xlabel("X/L [-]")
+plt.ylabel("P [bar]")
+plt.legend()
+plt.show()
+
+
+
+#%%
+# h_l0_02 #
+t_full_h_l0_02 = h_l0_02Ptap_ExpData['meta']['FTime[s]'] + h_l0_02Ptap_ExpData['meta']['FTime[ns]'] / 1e9
+t_elapsed_h_l0_02 = t_full_h_l0_02 - t_full_h_l0_02[0]
+P_h_l0_02Exp = h_l0_02Ptap_ExpData['P']
+T_h_l0_02Exp = h_l0_02Ptap_ExpData['T']
+P_h_l0_02Exp_Pa = {}
+for key in h_l0_02Ptap_ExpData['P'].keys():
+    P_h_l0_02Exp_Pa[key] = h_l0_02Ptap_ExpData['P'][key] * 101325
+expPlotter(t_elapsed_h_l0_02, P_h_l0_02Exp, "Pressure", "P", "Pa")
+expPlotter(t_elapsed_h_l0_02, T_h_l0_02Exp, "Temperature", "T", "C")
+
+
+# Plotting experimental results  
+P_averaged_h_l0_02 = expStatsP(h_l0_02Ptap_ExpData)
+channels = sorted(P_averaged_h_l0_02.keys())[1:]
+means    = [P_averaged_h_l0_02[ch]['mean']  for ch in channels]
+errors   = [P_averaged_h_l0_02[ch]['CI_95'] for ch in channels]
+x_exp_length = 7.5 * (np.array(channels) - 1)
+fig, ax = plt.subplots()
+ax.errorbar(x_exp_length, means, yerr=errors, fmt='o', capsize=4)
+ax.set_xlabel('X[mm]')
+ax.set_ylabel('Pressure [Bar]')
+ax.set_title('Mean wall pressure with 95% CI')
+plt.show()
+
