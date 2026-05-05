@@ -88,20 +88,18 @@ def find_token_prefix_match(target: Pathish, items: Iterable[Pathish], *, case_s
 ### Creating contours through multiple simulations. The attempt here is to automate this process ### 
   
 # Root directory to import mcfd_tec.bin files # 
-rootDir = Path(r"C:\Users\hhsabbah\Documents\01_Bladeless_Proj\32_Geometry Code\Results\Mach Study 2") # this is the root directory to the parametric study solution files
+rootDir = Path(r"C:\Users\hhsabbah\Documents\01_Bladeless_Proj\37_Mesh and CFD Setup\6_Optimized Case Sweep Study\5_Results\Run3\h_l_0.03") # this is the root directory to the parametric study solution files
 subDirs1 = [p for p in rootDir.iterdir() if p.is_dir()]
 
 
 # Finding destination directories to export the mach contours to the desired location #
-destRootDir = Path(r"C:\Users\hhsabbah\Documents\01_Bladeless_Proj\32_Geometry Code\Results Contour\Mach Contour") #This is where you want your contours to be 
+destRootDir = Path(r"C:\Users\hhsabbah\Documents\01_Bladeless_Proj\37_Mesh and CFD Setup\6_Optimized Case Sweep Study\5_Results\Run3\Mach Contours\h_l_0.03") #This is where you want your contours to be 
 destSubDir1 = [p for p in destRootDir.iterdir() if p.is_dir()]
 
 
 
-
-
 # Directory of the Tecplot Macro file #
-macroDir = Path(r"C:\Users\hhsabbah\Documents\01_Bladeless_Proj\21_ANSYS Workflow Automation\10_Tecplot Journal Scripts\1_Exporting Contours\1_Exporting Mach Contour\machContourExport1.mcr") # This is the directory of the macro file that I created
+macroDir = Path(r"C:\Users\hhsabbah\Documents\01_Bladeless_Proj\37_Mesh and CFD Setup\9_Macros\machContourExport1.mcr") # This is the directory of the macro file that I created
 
 
 # Using PyTecplot to open tecplot application automatically # 
@@ -129,6 +127,7 @@ subDirs2 = [p / fileName for p in subDirs2 if (p / fileName).is_file()]
 
 
 
+# For loop 
 for idx, subDir2 in enumerate(subDirs2):
     tp.data.load_tecplot(subDir2.as_posix())
     outputFileName = subDir2.parent.name + ".png" 

@@ -1,0 +1,954 @@
+\documentclass[11pt, letterpaper]{article}
+
+% --- Packages ---------------------------------------------------------------
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{mathptmx}                    % Times New Roman
+\usepackage[margin=1in]{geometry}
+\usepackage{graphicx}
+\usepackage{amsmath, amssymb}
+\usepackage{booktabs}                    % nice tables
+\usepackage{longtable}                   % tables that span pages
+\usepackage{xcolor}
+\usepackage{hyperref}
+\usepackage{listings}                    % code blocks
+\usepackage{enumitem}
+\usepackage{caption}
+\usepackage{fancyhdr}
+\usepackage{titlesec}
+
+% --- Code listing style ----------------------------------------------------
+\definecolor{codebg}{RGB}{245,245,245}
+\definecolor{codegreen}{RGB}{0,128,0}
+\definecolor{codegray}{RGB}{128,128,128}
+\definecolor{codeblue}{RGB}{0,0,180}
+\definecolor{codered}{RGB}{180,0,0}
+
+\lstdefinestyle{pythonstyle}{
+    language=Python,
+    backgroundcolor=\color{codebg},
+    basicstyle=\ttfamily\small,
+    keywordstyle=\color{codeblue}\bfseries,
+    stringstyle=\color{codered},
+    commentstyle=\color{codegreen}\itshape,
+    numberstyle=\tiny\color{codegray},
+    numbers=left,
+    numbersep=8pt,
+    frame=single,
+    framerule=0.4pt,
+    rulecolor=\color{codegray},
+    breaklines=true,
+    breakatwhitespace=false,
+    showstringspaces=false,
+    tabsize=4,
+    captionpos=b,
+    aboveskip=10pt,
+    belowskip=10pt,
+}
+\lstset{style=pythonstyle}
+
+% --- Header / Footer ------------------------------------------------------
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[L]{\small SBTTD Code Documentation}
+\fancyhead[R]{\small\thepage}
+\renewcommand{\headrulewidth}{0.4pt}
+
+% --- Section formatting ---------------------------------------------------
+\titleformat{\section}{\Large\bfseries}{Section \thesection:}{0.5em}{}
+\titleformat{\subsection}{\large\bfseries}{\thesubsection}{0.5em}{}
+
+% --- Document metadata ----------------------------------------------------
+\title{
+    \textbf{SBTTD Data Analysis Code} \\[0.3em]
+    \large Developer \& User Documentation \\[0.5em]
+    \normalsize Supersonic Bladeless Turbine Theoretical Development
+}
+\author{Hadie Sabbah}
+\date{Last Updated: \today}
+
+\begin{document}
+
+\maketitle
+\tableofcontents
+\newpage
+
+% ===========================================================================
+%                           INTRODUCTION
+% ===========================================================================
+\section{Introduction}
+
+This document provides comprehensive documentation for the SBTTD data
+analysis codebase. It is intended to serve as both a developer reference
+and a user guide so that lab members can understand and use the
+post-processing pipeline without needing to read the source code directly.
+
+\subsection{Repository Structure}
+
+The relevant code lives under:
+
+\begin{verbatim}
+2_SBTTD Data Analysis Code/
+    MachPostProcessCode.py      # Main analysis script
+    utils/
+        __init__.py
+        experimental.py         # Experimental + CFD comparison functions
+        dataload_util.py        # Tecplot data import / save / load
+        parameterComputation.py # Variable extraction & Reynolds number
+        computation.py          # (placeholder)
+        models.py               # Theoretical models (SPT, SE, geometry)
+        plotting.py             # Plotting utilities
+    docs/
+        sbttd_code_documentation.tex   # This document
+\end{verbatim}
+
+\subsection{Conventions Used in This Document}
+
+\begin{itemize}[nosep]
+    \item Function signatures are shown in \texttt{monospace}.
+    \item Parameters marked with a default value (e.g.\ \texttt{=1.0})
+          are optional.
+    \item All code examples assume the working directory is
+          \texttt{2\_SBTTD Data Analysis Code/}.
+\end{itemize}
+
+\newpage
+% ===========================================================================
+%                       utils/experimental.py
+% ===========================================================================
+\section{\texttt{utils/experimental.py} --- Experimental Data Processing}
+\label{sec:experimental}
+
+This module provides a complete pipeline for loading wind-tunnel
+experimental CSV data, auto-detecting test windows, computing statistics,
+and comparing experimental results against CFD solutions extracted from
+Tecplot. All functions support automatic pressure unit conversion so that
+experimental and CFD data can be brought into a common unit system before
+comparison.
+
+\subsection{Design Philosophy}
+
+The module is designed around two high-level workflow functions
+(\texttt{process\_exp\_case} and \texttt{compare\_exp\_to\_cfd}) that
+chain together lower-level helpers. Each function can also be called
+independently. The conversion path is:
+
+\begin{equation}
+    \text{raw value}
+    \;\xrightarrow{\times\;\texttt{pressure\_scale}\;+\;\texttt{pressure\_offset}}\;
+    \text{native unit}
+    \;\xrightarrow{\div\;\text{factor}}\;
+    \text{Pa}
+    \;\xrightarrow{\times\;\text{factor}}\;
+    \text{target unit}
+    \label{eq:conversion}
+\end{equation}
+
+This two-hop design (always passing through Pa as the canonical
+intermediate) guarantees that any source unit can be converted to any
+target unit without the user needing to know pairwise conversion factors.
+
+% --- Unit Conversion Table ---------------------------------------------
+\subsection{Supported Pressure Units}
+\label{subsec:units}
+
+The module stores conversion factors in a dictionary
+\texttt{PRESSURE\_UNIT\_FROM\_PA}. To convert a value from Pa to the
+target unit, multiply by the corresponding factor.
+
+\begin{table}[h!]
+\centering
+\caption{Supported pressure units and their conversion factors from Pa.}
+\label{tab:units}
+\begin{tabular}{@{}llc@{}}
+\toprule
+\textbf{Unit key} & \textbf{Description} & \textbf{Factor (from Pa)} \\
+\midrule
+\texttt{'Pa'}  & Pascal              & $1.0$ \\
+\texttt{'kPa'} & Kilopascal          & $10^{-3}$ \\
+\texttt{'MPa'} & Megapascal          & $10^{-6}$ \\
+\texttt{'bar'} & Bar                 & $10^{-5}$ \\
+\texttt{'atm'} & Standard atmosphere & $1/101325$ \\
+\texttt{'psi'} & Pounds per sq.\ inch & $1/6894.757$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+To add a new unit, append one entry to \texttt{PRESSURE\_UNIT\_FROM\_PA}
+and one to \texttt{PRESSURE\_UNIT\_LABELS} at the top of
+\texttt{experimental.py}. No other code changes are needed.
+
+% --- _convert_pressure -------------------------------------------------
+\subsection{\texttt{\_convert\_pressure(value\_pa, target\_unit)}}
+\label{subsec:convert_pressure}
+
+\textbf{Purpose:} Internal helper that converts a pressure value (scalar
+or NumPy array) from Pa to the specified target unit.
+
+\begin{table}[h!]
+\centering
+\caption{Parameters for \texttt{\_convert\_pressure}.}
+\begin{tabular}{@{}lll@{}}
+\toprule
+\textbf{Parameter} & \textbf{Type} & \textbf{Description} \\
+\midrule
+\texttt{value\_pa}   & \texttt{float} or \texttt{np.array} & Pressure in Pa \\
+\texttt{target\_unit} & \texttt{str} & Key from Table~\ref{tab:units} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\textbf{Returns:} The converted value in the target unit.
+
+\textbf{Raises:} \texttt{ValueError} if \texttt{target\_unit} is not a
+recognized key.
+
+% --- set_publication_style ---------------------------------------------
+\subsection{\texttt{set\_publication\_style(dpi=300)}}
+\label{subsec:set_pub_style}
+
+\textbf{Purpose:} Configure \texttt{matplotlib} rcParams for
+publication-quality figures (Times New Roman, appropriate font sizes,
+line widths). Call this \emph{once} at the start of your script before
+any plotting.
+
+\begin{table}[h!]
+\centering
+\caption{Parameters for \texttt{set\_publication\_style}.}
+\begin{tabular}{@{}llll@{}}
+\toprule
+\textbf{Parameter} & \textbf{Type} & \textbf{Default} & \textbf{Description} \\
+\midrule
+\texttt{dpi} & \texttt{int} & \texttt{300} & Resolution for display and saved figures \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\textbf{Returns:} None (modifies global \texttt{matplotlib} state).
+
+\begin{lstlisting}[caption={Setting publication style.}]
+from utils.experimental import set_publication_style
+set_publication_style(dpi=600)  # higher res for journal submission
+\end{lstlisting}
+
+% --- exp_cleaner -------------------------------------------------------
+\subsection{\texttt{exp\_cleaner(dirc)}}
+\label{subsec:exp_cleaner}
+
+\textbf{Purpose:} Read an experimental CSV file produced by the data
+acquisition system and return a structured dictionary with sensor data
+separated by type (pressure vs.\ temperature), keyed by channel number.
+
+The function auto-detects sensor columns using the regex pattern
+\texttt{(SN\textbackslash d+)-([PT])(\textbackslash d+)}, which matches
+headers like \texttt{SN1051-P01}, \texttt{SN1051-T06}, etc. Any column
+that does not match this pattern is treated as metadata (e.g.\
+\texttt{Frame}, \texttt{FTime[s]}, \texttt{FTime[ns]}).
+
+\begin{table}[h!]
+\centering
+\caption{Parameters for \texttt{exp\_cleaner}.}
+\begin{tabular}{@{}lll@{}}
+\toprule
+\textbf{Parameter} & \textbf{Type} & \textbf{Description} \\
+\midrule
+\texttt{dirc} & \texttt{str} or \texttt{Path} & Path to the CSV file \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\textbf{Returns:} A dictionary with four keys:
+
+\begin{table}[h!]
+\centering
+\caption{Return structure for \texttt{exp\_cleaner}.}
+\begin{tabular}{@{}lp{10cm}@{}}
+\toprule
+\textbf{Key} & \textbf{Description} \\
+\midrule
+\texttt{'sensor\_map'} & \texttt{dict} --- Full column metadata: \texttt{\{col\_idx: \{'serial', 'type', 'channel', 'header'\}\}} \\
+\texttt{'meta'}        & \texttt{dict} --- Non-sensor columns: \texttt{\{header\_name: np.array\}} \\
+\texttt{'P'}           & \texttt{dict} --- Pressure data: \texttt{\{channel\_number: np.array\}} \\
+\texttt{'T'}           & \texttt{dict} --- Temperature data: \texttt{\{channel\_number: np.array\}} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{lstlisting}[caption={Basic usage of \texttt{exp\_cleaner}.}]
+from utils.experimental import exp_cleaner
+data = exp_cleaner(r"C:\...\Scan.csv")
+print(data['P'].keys())     # e.g. dict_keys([1, 2, 3, ...])
+print(data['meta'].keys())  # e.g. dict_keys(['Frame', 'FTime[s]', ...])
+\end{lstlisting}
+
+% --- detect_test_window -----------------------------------------------
+\subsection{\texttt{detect\_test\_window(clean\_data, k\_sigma=10, n\_baseline=50)}}
+\label{subsec:detect_test_window}
+
+\textbf{Purpose:} Automatically detect the start and end of the
+wind-tunnel test run from the pressure time series. The algorithm:
+
+\begin{enumerate}[nosep]
+    \item Identifies the stagnation channel (highest mean pressure).
+    \item Estimates the noise floor from the first \texttt{n\_baseline}
+          frames.
+    \item Sets a threshold at $\mu_{\text{baseline}} + k_\sigma \cdot
+          \sigma_{\text{baseline}}$.
+    \item Returns the first and last frame indices where pressure exceeds
+          this threshold.
+\end{enumerate}
+
+\begin{table}[h!]
+\centering
+\caption{Parameters for \texttt{detect\_test\_window}.}
+\begin{tabular}{@{}llll@{}}
+\toprule
+\textbf{Parameter} & \textbf{Type} & \textbf{Default} & \textbf{Description} \\
+\midrule
+\texttt{clean\_data} & \texttt{dict}  & ---        & Output from \texttt{exp\_cleaner()} \\
+\texttt{k\_sigma}    & \texttt{float} & \texttt{10}  & Threshold in standard deviations \\
+\texttt{n\_baseline} & \texttt{int}   & \texttt{50}  & Number of pre-test frames for noise estimation \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\textbf{Returns:} \texttt{(i\_start, i\_end, t\_start, t\_end)} ---
+frame indices and corresponding times in seconds.
+
+\textbf{Raises:} \texttt{ValueError} if no frames exceed the threshold.
+
+% --- exp_plotter ------------------------------------------------------
+\subsection{\texttt{exp\_plotter(x\_data, y\_dict, y\_name, label\_name, y\_unit, show=True)}}
+\label{subsec:exp_plotter}
+
+\textbf{Purpose:} Plot time-series data for each sensor channel on a
+single axes. Primarily used to visualize raw pressure or temperature
+traces during a test run.
+
+\begin{table}[h!]
+\centering
+\caption{Parameters for \texttt{exp\_plotter}.}
+\begin{tabular}{@{}llll@{}}
+\toprule
+\textbf{Parameter} & \textbf{Type} & \textbf{Default} & \textbf{Description} \\
+\midrule
+\texttt{x\_data}     & \texttt{np.array} & ---          & Time array (x-axis) \\
+\texttt{y\_dict}     & \texttt{dict}     & ---          & \texttt{\{channel: np.array\}} \\
+\texttt{y\_name}     & \texttt{str}      & ---          & Y-axis label name (e.g.\ ``Pressure'') \\
+\texttt{label\_name} & \texttt{str}      & ---          & Legend prefix (e.g.\ ``P'' or ``T'') \\
+\texttt{y\_unit}     & \texttt{str}      & ---          & Unit string (e.g.\ ``Pa'') \\
+\texttt{show}        & \texttt{bool}     & \texttt{True} & Whether to call \texttt{plt.show()} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\textbf{Returns:} \texttt{(fig, ax)} --- Matplotlib figure and axes
+objects for further customization.
+
+% --- exp_stats_pressure -----------------------------------------------
+\subsection{\texttt{exp\_stats\_pressure(clean\_data, confidence=0.95)}}
+\label{subsec:exp_stats_pressure}
+
+\textbf{Purpose:} Compute descriptive statistics for each pressure
+channel over the auto-detected test window. Internally calls
+\texttt{detect\_test\_window()} to crop the data.
+
+Statistics computed for each channel:
+
+\begin{itemize}[nosep]
+    \item $\bar{x}$ (mean)
+    \item $s$ (standard deviation, with Bessel's correction $\text{ddof}=1$)
+    \item $\text{SEM} = s / \sqrt{N}$
+    \item 95\% confidence interval: $\text{CI} = t_{\alpha/2,\,N-1}
+          \cdot \text{SEM}$
+\end{itemize}
+
+\begin{table}[h!]
+\centering
+\caption{Parameters for \texttt{exp\_stats\_pressure}.}
+\begin{tabular}{@{}llll@{}}
+\toprule
+\textbf{Parameter} & \textbf{Type} & \textbf{Default} & \textbf{Description} \\
+\midrule
+\texttt{clean\_data} & \texttt{dict}  & ---       & Output from \texttt{exp\_cleaner()} \\
+\texttt{confidence}  & \texttt{float} & \texttt{0.95} & Confidence level for CI \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\textbf{Returns:} \texttt{dict} ---
+\texttt{\{channel: \{'mean', 'std', 'sem', 'CI\_95', 'N'\}\}}.
+
+Note: the returned values are in the \emph{raw sensor units} (whatever
+the CSV contains). Unit conversion happens downstream in
+\texttt{process\_exp\_case}.
+
+% --- slice_extractor_wall ---------------------------------------------
+\subsection{\texttt{slice\_extractor\_wall(dirc)}}
+\label{subsec:slice_extractor_wall}
+
+\textbf{Purpose:} Extract the bottom-wall surface data from a 3D
+Tecplot CFD solution by slicing at $z = 0$. Requires an active Tecplot
+session (\texttt{tp.session.connect()}).
+
+\textbf{Algorithm:}
+\begin{enumerate}[nosep]
+    \item Load the Tecplot binary file (or reuse if already loaded).
+    \item Set the frame to Cartesian 3D.
+    \item Extract a slice at $z = 0$ from the ``Section'' surface zone,
+          using \texttt{OneZonePerConnectedRegion} mode.
+    \item Select the zone with the lowest mean $Y$ (the bottom wall).
+    \item Sort all arrays by $X$ and return.
+\end{enumerate}
+
+\begin{table}[h!]
+\centering
+\caption{Parameters for \texttt{slice\_extractor\_wall}.}
+\begin{tabular}{@{}lll@{}}
+\toprule
+\textbf{Parameter} & \textbf{Type} & \textbf{Description} \\
+\midrule
+\texttt{dirc} & \texttt{str} or \texttt{Path} & Path to \texttt{mcfd\_tec.bin} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\textbf{Returns:} \texttt{(x\_wall, y\_wall, p\_wall, T\_wall)} --- all
+\texttt{np.array}, sorted by $x$. Pressures are in the CFD solver's
+native unit (typically Pa).
+
+% --- process_exp_case -------------------------------------------------
+\subsection{\texttt{process\_exp\_case(...)}}
+\label{subsec:process_exp_case}
+
+\textbf{Purpose:} One-call pipeline that loads a CSV, computes elapsed
+time, converts pressures, runs statistics, and returns everything in a
+single consistent pressure unit. This is the primary entry point for
+processing an experimental dataset.
+
+\textbf{Full signature:}
+\begin{lstlisting}[numbers=none]
+process_exp_case(
+    csv_path,
+    tap_spacing_mm,
+    skip_channels=0,
+    pressure_scale=1.0,
+    pressure_offset=0.0,
+    exp_native_unit='Pa',
+    pressure_unit='Pa',
+    plot=True,
+)
+\end{lstlisting}
+
+\begin{longtable}{@{}lllp{6.5cm}@{}}
+\caption{Parameters for \texttt{process\_exp\_case}.}
+\label{tab:process_exp_case_params} \\
+\toprule
+\textbf{Parameter} & \textbf{Type} & \textbf{Default} & \textbf{Description} \\
+\midrule
+\endfirsthead
+\toprule
+\textbf{Parameter} & \textbf{Type} & \textbf{Default} & \textbf{Description} \\
+\midrule
+\endhead
+\texttt{csv\_path}        & \texttt{str/Path} & ---           & Path to experimental CSV \\
+\texttt{tap\_spacing\_mm} & \texttt{float}    & ---           & Physical distance between taps [mm] \\
+\texttt{skip\_channels}   & \texttt{int}      & \texttt{0}    & Leading channels to exclude from stats \\
+\texttt{pressure\_scale}  & \texttt{float}    & \texttt{1.0}  & Multiplier: raw $\to$ \texttt{exp\_native\_unit} \\
+\texttt{pressure\_offset} & \texttt{float}    & \texttt{0.0}  & Offset added after scaling (in native unit) \\
+\texttt{exp\_native\_unit}& \texttt{str}      & \texttt{'Pa'} & Unit produced by scale + offset \\
+\texttt{pressure\_unit}   & \texttt{str}      & \texttt{'Pa'} & Desired output unit (see Table~\ref{tab:units}) \\
+\texttt{plot}             & \texttt{bool}     & \texttt{True} & Show time-series plots \\
+\bottomrule
+\end{longtable}
+
+\textbf{Unit conversion logic} (see also Eq.~\ref{eq:conversion}):
+
+\begin{enumerate}[nosep]
+    \item Multiply raw sensor reading by \texttt{pressure\_scale}.
+    \item Add \texttt{pressure\_offset}. The result is now in
+          \texttt{exp\_native\_unit}.
+    \item Convert to Pa: divide by
+          \texttt{PRESSURE\_UNIT\_FROM\_PA[exp\_native\_unit]}.
+    \item Convert Pa to \texttt{pressure\_unit}: multiply by
+          \texttt{PRESSURE\_UNIT\_FROM\_PA[pressure\_unit]}.
+\end{enumerate}
+
+\textbf{Returns:} A dictionary with the following keys:
+
+\begin{table}[h!]
+\centering
+\caption{Return structure for \texttt{process\_exp\_case}.}
+\begin{tabular}{@{}lp{9cm}@{}}
+\toprule
+\textbf{Key} & \textbf{Description} \\
+\midrule
+\texttt{'clean\_data'}    & Raw output from \texttt{exp\_cleaner()} \\
+\texttt{'t\_elapsed'}     & Elapsed time array [s] \\
+\texttt{'P\_converted'}   & \texttt{\{channel: np.array\}} in \texttt{pressure\_unit} \\
+\texttt{'T\_data'}        & \texttt{\{channel: np.array\}} temperature data \\
+\texttt{'stats'}          & Raw statistics from \texttt{exp\_stats\_pressure()} \\
+\texttt{'channels'}       & Sorted channel list (after skipping) \\
+\texttt{'means'}          & \texttt{np.array} of mean pressures in \texttt{pressure\_unit} \\
+\texttt{'errors'}         & \texttt{np.array} of 95\% CI values in \texttt{pressure\_unit} \\
+\texttt{'x\_exp\_mm'}     & Tap locations in mm \\
+\texttt{'pressure\_unit'} & String recording the output unit \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsubsection*{Example: Flat Plate (raw in bar, output in kPa)}
+
+\begin{lstlisting}[caption={Processing a flat-plate experiment.}]
+from utils.experimental import set_publication_style, process_exp_case
+
+set_publication_style()
+
+flat = process_exp_case(
+    csv_path=r"C:\...\Scan.csv",
+    tap_spacing_mm=7.25,
+    skip_channels=3,       # skip stagnation ports
+    pressure_scale=1e5,    # raw is in bar -> * 1e5 = Pa
+    pressure_offset=101325,# gauge -> absolute
+    exp_native_unit='Pa',  # after scale+offset we have Pa
+    pressure_unit='kPa',   # output everything in kPa
+)
+print(flat['means'])       # array in kPa
+print(flat['pressure_unit'])  # 'kPa'
+\end{lstlisting}
+
+\subsubsection*{Example: h/l = 0.02 Angled (raw in atm, output in bar)}
+
+\begin{lstlisting}[caption={Processing an angled-geometry experiment.}]
+angled = process_exp_case(
+    csv_path=r"C:\...\Test1.csv",
+    tap_spacing_mm=5.65,
+    skip_channels=3,
+    pressure_scale=101325,  # raw is in atm -> * 101325 = Pa
+    exp_native_unit='Pa',
+    pressure_unit='bar',    # output in bar
+)
+\end{lstlisting}
+
+% --- plot_exp_errorbar ------------------------------------------------
+\subsection{\texttt{plot\_exp\_errorbar(exp\_result, ...)}}
+\label{subsec:plot_exp_errorbar}
+
+\textbf{Purpose:} Generate an error-bar plot of mean wall pressure vs.\
+tap location from the output of \texttt{process\_exp\_case}. The
+$y$-axis label is auto-generated from the stored
+\texttt{pressure\_unit} unless overridden.
+
+\begin{table}[h!]
+\centering
+\caption{Parameters for \texttt{plot\_exp\_errorbar}.}
+\begin{tabular}{@{}llll@{}}
+\toprule
+\textbf{Parameter} & \textbf{Type} & \textbf{Default} & \textbf{Description} \\
+\midrule
+\texttt{exp\_result} & \texttt{dict}  & ---                              & Output from \texttt{process\_exp\_case()} \\
+\texttt{title}       & \texttt{str}   & \texttt{"Experimental Wall Pressure"} & Plot title \\
+\texttt{xlabel}      & \texttt{str}   & \texttt{"X [mm]"}                & X-axis label \\
+\texttt{ylabel}      & \texttt{str}   & \texttt{None}                    & Auto from unit if \texttt{None} \\
+\texttt{show}        & \texttt{bool}  & \texttt{True}                    & Call \texttt{plt.show()} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\textbf{Returns:} \texttt{(fig, ax)}.
+
+\begin{lstlisting}[caption={Plotting experimental error bars.}]
+from utils.experimental import plot_exp_errorbar
+
+fig, ax = plot_exp_errorbar(flat, title="Flat Plate")
+# ylabel will automatically be "Pressure [kPa]"
+\end{lstlisting}
+
+% --- compare_exp_to_cfd ----------------------------------------------
+\subsection{\texttt{compare\_exp\_to\_cfd(...)}}
+\label{subsec:compare_exp_to_cfd}
+
+\textbf{Purpose:} Load CFD wall data from Tecplot, trim to a matching
+$x$-range, convert both CFD and experimental pressures to a common unit,
+and produce an overlay plot. This function guarantees unit consistency
+between the two data sources.
+
+\textbf{Full signature:}
+\begin{lstlisting}[numbers=none]
+compare_exp_to_cfd(
+    exp_result, cfd_path, x_min_cfd, x_max_cfd,
+    cfd_native_unit='Pa',
+    cfd_pressure_offset=0.0,
+    pressure_unit=None,
+    normalize=False,
+    title="Pressure Vs X",
+    xlabel="X [mm]",
+    ylabel=None,
+    show=True,
+)
+\end{lstlisting}
+
+\begin{longtable}{@{}lllp{5.8cm}@{}}
+\caption{Parameters for \texttt{compare\_exp\_to\_cfd}.}
+\label{tab:compare_params} \\
+\toprule
+\textbf{Parameter} & \textbf{Type} & \textbf{Default} & \textbf{Description} \\
+\midrule
+\endfirsthead
+\toprule
+\textbf{Parameter} & \textbf{Type} & \textbf{Default} & \textbf{Description} \\
+\midrule
+\endhead
+\texttt{exp\_result}           & \texttt{dict}       & ---           & Output from \texttt{process\_exp\_case()} \\
+\texttt{cfd\_path}             & \texttt{str/Path}   & ---           & Path to \texttt{mcfd\_tec.bin} \\
+\texttt{x\_min\_cfd}           & \texttt{float}      & ---           & Left trim bound (CFD coords) \\
+\texttt{x\_max\_cfd}           & \texttt{float}      & ---           & Right trim bound (CFD coords) \\
+\texttt{cfd\_native\_unit}     & \texttt{str}        & \texttt{'Pa'} & Unit the CFD solver writes \\
+\texttt{cfd\_pressure\_offset} & \texttt{float}      & \texttt{0.0}  & Subtracted from CFD $P$ before conversion (in native unit) \\
+\texttt{pressure\_unit}        & \texttt{str/None}   & \texttt{None} & Target unit; if \texttt{None}, matches experiment \\
+\texttt{normalize}             & \texttt{bool}       & \texttt{False}& Normalize both by their maxima \\
+\texttt{title}                 & \texttt{str}        & ---           & Plot title \\
+\texttt{xlabel}                & \texttt{str}        & ---           & X-axis label \\
+\texttt{ylabel}                & \texttt{str/None}   & \texttt{None} & Auto from unit if \texttt{None} \\
+\texttt{show}                  & \texttt{bool}       & \texttt{True} & Call \texttt{plt.show()} \\
+\bottomrule
+\end{longtable}
+
+\textbf{Unit matching logic:}
+\begin{itemize}[nosep]
+    \item If \texttt{pressure\_unit=None}: the function reads
+          \texttt{exp\_result['pressure\_unit']} and converts CFD data to
+          that same unit. \textbf{No mismatch is possible.}
+    \item If \texttt{pressure\_unit='psi'} (or any valid key): both CFD
+          and experimental data are converted to that unit, regardless of
+          what either started in.
+    \item The CFD conversion path is:
+          $P_{\text{CFD}} - \texttt{offset} \;\to\; \text{Pa} \;\to\;
+          \texttt{pressure\_unit}$.
+    \item If the experiment was already processed in a different unit, it
+          is re-converted: $\texttt{exp\_unit} \;\to\; \text{Pa} \;\to\;
+          \texttt{pressure\_unit}$.
+\end{itemize}
+
+\textbf{Returns:} A dictionary:
+
+\begin{table}[h!]
+\centering
+\caption{Return structure for \texttt{compare\_exp\_to\_cfd}.}
+\begin{tabular}{@{}lp{8.5cm}@{}}
+\toprule
+\textbf{Key} & \textbf{Description} \\
+\midrule
+\texttt{'x\_cfd'}, \texttt{'P\_cfd'}         & Trimmed CFD arrays in \texttt{pressure\_unit} \\
+\texttt{'x\_exp'}, \texttt{'P\_exp'}, \texttt{'errors'} & Experimental arrays in \texttt{pressure\_unit} \\
+\texttt{'x\_wall'}, \texttt{'y\_wall'}, \texttt{'P\_wall'}, \texttt{'T\_wall'} & Raw wall data (CFD native unit) \\
+\texttt{'pressure\_unit'}                     & The unit used for comparison \\
+\texttt{'fig'}, \texttt{'ax'}                 & Matplotlib figure and axes \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsubsection*{Example: Auto-match experiment unit}
+
+\begin{lstlisting}[caption={CFD vs.\ experiment --- auto unit matching.}]
+from utils.experimental import compare_exp_to_cfd
+
+# flat was processed with pressure_unit='kPa'
+result = compare_exp_to_cfd(
+    flat,
+    cfd_path=r"C:\...\mcfd_tec.bin",
+    x_min_cfd=40, x_max_cfd=127,
+    cfd_native_unit='Pa',
+    cfd_pressure_offset=94748,
+    # pressure_unit=None -> auto uses 'kPa' from flat
+)
+# Both curves are in kPa, ylabel = "P [kPa]"
+\end{lstlisting}
+
+\subsubsection*{Example: Force a different unit}
+
+\begin{lstlisting}[caption={Override to compare in psi.}]
+result = compare_exp_to_cfd(
+    flat,
+    cfd_path=r"C:\...\mcfd_tec.bin",
+    x_min_cfd=40, x_max_cfd=127,
+    cfd_native_unit='Pa',
+    cfd_pressure_offset=94748,
+    pressure_unit='psi',  # forces both to psi
+)
+# ylabel = "P [psi]"
+\end{lstlisting}
+
+\subsubsection*{Example: Normalized comparison}
+
+\begin{lstlisting}[caption={Normalized overlay.}]
+result = compare_exp_to_cfd(
+    flat,
+    cfd_path=r"C:\...\mcfd_tec.bin",
+    x_min_cfd=40, x_max_cfd=127,
+    cfd_native_unit='Pa',
+    cfd_pressure_offset=94748,
+    normalize=True,
+)
+# ylabel = "Normalized P [-]"
+\end{lstlisting}
+
+% ===========================================================================
+%                           COMPLETE WORKFLOW
+% ===========================================================================
+\newpage
+\section{Complete Workflow Example}
+\label{sec:workflow}
+
+The following script demonstrates the full pipeline for processing three
+experimental cases and comparing each to its corresponding CFD solution,
+all in a common pressure unit.
+
+\begin{lstlisting}[caption={Full workflow for three experimental cases.}]
+from pathlib import Path
+from utils.experimental import (
+    set_publication_style,
+    process_exp_case,
+    plot_exp_errorbar,
+    compare_exp_to_cfd,
+)
+
+set_publication_style()
+
+# -- 1. Flat Plate ------------------------------------------
+flat = process_exp_case(
+    csv_path=r"C:\...\Scan.csv",
+    tap_spacing_mm=7.25,
+    skip_channels=3,
+    pressure_scale=1e5,
+    pressure_offset=101325,
+    exp_native_unit='Pa',
+    pressure_unit='kPa',
+)
+plot_exp_errorbar(flat, title="Flat Plate")
+
+compare_exp_to_cfd(
+    flat,
+    cfd_path=r"C:\...\mcfd_tec.bin",
+    x_min_cfd=40, x_max_cfd=127,
+    cfd_native_unit='Pa',
+    cfd_pressure_offset=94748,
+)
+
+# -- 2. h/l = 0.02 Angled ----------------------------------
+angled = process_exp_case(
+    csv_path=r"C:\...\Test1.csv",
+    tap_spacing_mm=5.65,
+    skip_channels=3,
+    pressure_scale=101325,
+    exp_native_unit='Pa',
+    pressure_unit='kPa',
+)
+plot_exp_errorbar(angled, title="h/l = 0.02 Angled")
+
+compare_exp_to_cfd(
+    angled,
+    cfd_path=r"C:\...\mcfd_tec.bin",
+    x_min_cfd=-0.005, x_max_cfd=0.0678,
+    cfd_native_unit='Pa',
+    cfd_pressure_offset=101325,
+)
+
+# -- 3. h/l = 0.02 Straight --------------------------------
+straight = process_exp_case(
+    csv_path=r"C:\...\P_tap_results_Test8.csv",
+    tap_spacing_mm=7.5,
+    skip_channels=1,
+    pressure_scale=101325,
+    exp_native_unit='Pa',
+    pressure_unit='kPa',
+)
+plot_exp_errorbar(straight, title="h/l = 0.02 Straight")
+\end{lstlisting}
+
+% ===========================================================================
+%                           ADDING NEW UNITS
+% ===========================================================================
+\section{How to Add a New Pressure Unit}
+\label{sec:add_unit}
+
+To add support for a new pressure unit (e.g.\ mmHg), edit the two
+dictionaries at the top of \texttt{utils/experimental.py}:
+
+\begin{lstlisting}[caption={Adding mmHg support.}]
+PRESSURE_UNIT_FROM_PA = {
+    'Pa':   1.0,
+    'kPa':  1e-3,
+    # ... existing entries ...
+    'mmHg': 1.0 / 133.322,   # <-- add this line
+}
+
+PRESSURE_UNIT_LABELS = {
+    'Pa': 'Pa',
+    # ... existing entries ...
+    'mmHg': 'mmHg',           # <-- add this line
+}
+\end{lstlisting}
+
+No other code changes are required. The new unit will work with all
+functions immediately.
+
+\newpage
+% ===================================================================
+%                       GUI APPLICATION
+% ===================================================================
+\section{\texttt{sweep\_study\_gui.py} --- Desktop GUI Application}
+\label{sec:gui}
+
+This section documents the graphical user interface (GUI) application
+that wraps the analysis pipeline into a point-and-click tool for lab
+members.
+
+\subsection{Prerequisites}
+
+\begin{lstlisting}[numbers=none]
+pip install customtkinter
+\end{lstlisting}
+
+All other dependencies (numpy, matplotlib, scipy) should already be
+installed from the analysis code.
+
+\subsection{Launching the GUI}
+
+\begin{lstlisting}[numbers=none]
+cd "2_SBTTD Data Analysis Code"
+python sweep_study_gui.py
+\end{lstlisting}
+
+\subsection{GUI Architecture}
+
+The application is built on three core concepts:
+
+\begin{enumerate}[nosep]
+    \item \textbf{Widgets}: Visual elements (buttons, text fields,
+          dropdowns, labels). Each is a Python object you create and
+          place on the window.
+    \item \textbf{Layout (Grid)}: Widgets are placed in a grid (row,
+          column). Think of the window as a spreadsheet.
+    \item \textbf{Callbacks}: Functions triggered by user actions. E.g.,
+          clicking ``Browse'' opens a file dialog.
+\end{enumerate}
+
+The basic pattern for every widget:
+\begin{lstlisting}[numbers=none]
+widget = SomeWidget(parent, options...)    # create
+widget.grid(row=R, column=C)              # place
+widget.configure(command=my_function)     # connect callback
+\end{lstlisting}
+
+\subsection{Application Structure}
+
+The GUI is a single class (\texttt{SweepStudyApp}) inheriting from
+\texttt{customtkinter.CTk}:
+
+\begin{table}[h!]
+\centering
+\caption{GUI layout structure.}
+\begin{tabular}{@{}llp{7cm}@{}}
+\toprule
+\textbf{Region} & \textbf{Widget} & \textbf{Purpose} \\
+\midrule
+Left sidebar     & \texttt{CTkFrame}    & Study type selector, theme toggle \\
+Center (Tab 1)   & ``Experimental Data'' & CSV file selection, sensor parameters, pressure conversion settings \\
+Center (Tab 2)   & ``CFD Comparison''    & Tecplot file, domain trim bounds, CFD unit settings \\
+Center (Tab 3)   & ``Results''           & Embedded matplotlib plot area \\
+Bottom           & Status bar            & Feedback messages \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{How to Extend the GUI}
+
+\subsubsection*{Adding a New Input Field}
+
+To add a new parameter (e.g., a custom title for the plot):
+
+\begin{lstlisting}[caption={Adding a new text entry to a tab.}]
+# Inside _build_exp_tab(), add these lines:
+ctk.CTkLabel(tab, text="Plot Title:").grid(
+    row=row, column=0, padx=10, pady=5, sticky="w")
+self.plot_title_var = ctk.StringVar(value="My Plot")
+ctk.CTkEntry(tab, textvariable=self.plot_title_var, width=300).grid(
+    row=row, column=1, padx=5, pady=5, sticky="w")
+row += 1
+\end{lstlisting}
+
+Then read the value in the callback:
+\begin{lstlisting}[numbers=none]
+title = self.plot_title_var.get()
+\end{lstlisting}
+
+\subsubsection*{Adding a New Tab}
+
+\begin{lstlisting}[caption={Adding a new tab.}]
+# In _create_main_area():
+self.tab_new = self.tabview.add("Batch Processing")
+
+# Then create a builder method:
+def _build_batch_tab(self):
+    tab = self.tab_new
+    # ... add widgets here ...
+\end{lstlisting}
+
+\subsubsection*{Adding a New Button with a Callback}
+
+\begin{lstlisting}[caption={Button with callback pattern.}]
+def _build_my_section(self):
+    ctk.CTkButton(
+        tab,
+        text="Export to CSV",
+        command=self._export_results  # <-- function called on click
+    ).grid(row=row, column=0, pady=10)
+
+def _export_results(self):
+    """This runs when the user clicks 'Export to CSV'."""
+    # ... do work here ...
+    self._set_status("Exported successfully!")
+\end{lstlisting}
+
+\subsubsection*{Embedding a Matplotlib Plot}
+
+The key technique for scientific GUIs:
+
+\begin{lstlisting}[caption={Embedding matplotlib inside tkinter.}]
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+
+# 1. Create figure (do NOT call plt.show())
+fig, ax = plt.subplots(figsize=(8, 5))
+ax.plot(x, y)
+
+# 2. Wrap in canvas and attach to a frame
+canvas = FigureCanvasTkAgg(fig, master=self.plot_frame)
+canvas.draw()
+canvas.get_tk_widget().pack(fill="both", expand=True)
+\end{lstlisting}
+
+\subsection{User Workflow}
+
+\begin{enumerate}
+    \item Launch the app (\texttt{python sweep\_study\_gui.py}).
+    \item In the \textbf{Experimental Data} tab:
+    \begin{enumerate}[nosep]
+        \item Click ``Browse'' and select your CSV file.
+        \item Set tap spacing, skip channels, and pressure conversion
+              parameters.
+        \item Choose your desired output unit from the dropdown.
+        \item Click ``Process Experimental Data''.
+    \end{enumerate}
+    \item View the error-bar plot in the \textbf{Results} tab.
+    \item (Optional) In the \textbf{CFD Comparison} tab:
+    \begin{enumerate}[nosep]
+        \item Browse for the \texttt{mcfd\_tec.bin} file.
+        \item Set the $x$-trim bounds and pressure offset.
+        \item Choose a comparison unit or leave on ``Auto''.
+        \item Click ``Compare Experiment vs CFD''.
+    \end{enumerate}
+    \item The overlay plot appears in the \textbf{Results} tab.
+\end{enumerate}
+
+\end{document}

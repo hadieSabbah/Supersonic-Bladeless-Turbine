@@ -1824,60 +1824,79 @@ def export_mach_contours(
     layout_dest,
     file_name="mcfd_tec.bin",
     res_number=4096,
+    contour_min=None,
+    contour_max=None,
+    num_levels=10,
+    progress_callback=None,
+    abort_event=None,
 ):
     """
-    Export Mach contour images for all cases in a parametric study using a Tecplot layout.
+    Export Mach contour images for all cases under *study_dir*.
 
     Parameters
     ----------
-    study_dir   : str or Path
-        Root directory containing the CFD++ result files.
-    png_dest    : str or Path
-        Destination directory for the exported PNG contour images.
-    layout_dest : str or Path
-        Full path to the Tecplot layout file (e.g. machLayout.lay).
-    file_name   : str, optional
-        Name of the Tecplot binary file to load (default: 'mcfd_tec.bin').
-    res_number  : int, optional
-        Image resolution in pixels (default: 4096).
+    contour_min, contour_max : float or None
+        Fixed contour-legend bounds.  When None, bounds are auto-detected
+        per Mach group and rounded to nice values for uniform comparison.
+    progress_callback : callable(current, total, file_name) or None
+        Called after each file so the GUI can update a progress bar.
+    abort_event : threading.Event or None
+        Set the event to cancel the export mid-way.
     """
     from tecplot.constant import ReadDataOption
 
     study_dir   = Path(study_dir)
     png_dest    = Path(png_dest)
     layout_dest = Path(layout_dest)
+    png_dest.mkdir(parents=True, exist_ok=True)
 
-    # Recursively find all matching files under study_dir
     file_paths = list(study_dir.rglob(file_name))
+    total = len(file_paths)
 
-    if not file_paths:
+    if total == 0:
         print(f"No '{file_name}' files found under {study_dir}")
         return
 
-    # Connect to open Tecplot session
     tp.session.connect()
 
-    for file_path in file_paths:
+    for idx, file_path in enumerate(file_paths):
+        if abort_event and abort_event.is_set():
+            return
+
         tp.new_layout()
         tp.load_layout(layout_dest.as_posix())
         tp.data.load_tecplot(
             file_path.as_posix(),
             read_data_option=ReadDataOption.Replace,
-            reset_style=False
+            reset_style=False,
         )
 
-        # Get plot and dataset objects
         frame   = tp.active_frame()
         dataset = frame.dataset
         plot    = frame.plot()
-
-        # Compute actual Mach data range across all zones
         mach_var = dataset.variable('M')
+
+        plot.view.fit()
+
         mach_min = min(zone.values(mach_var).min() for zone in dataset.zones())
         mach_max = max(zone.values(mach_var).max() for zone in dataset.zones())
 
-        # Reset contour levels to actual data range
-        plot.contour(0).levels.reset_levels(mach_min, mach_max, (mach_max - mach_min) / 10)
+        inlet_zone = next(
+            (z for z in dataset.zones() if "inlet" in z.name.lower()), None)
+        if inlet_zone is not None:
+            mach_mean = np.round(
+                np.mean(inlet_zone.values(mach_var).as_numpy_array()),
+                decimals=1)
+        else:
+            mach_mean = np.round(mach_max, decimals=1)
+
+        if contour_min is not None:
+            mach_min = contour_min
+        if contour_max is not None:
+            mach_mean = contour_max
+
+        contour_list = list(np.linspace(mach_min, mach_mean, num_levels))
+        plot.contour(0).levels.reset_levels(contour_list)
 
         tp.macro.execute_command(f'''$!GlobalContour 1
             ColorMapFilter
@@ -1886,16 +1905,17 @@ def export_mach_contours(
                 ContinuousColor
                 {{
                     CMin = {mach_min}
-                    CMax = {mach_max}
+                    CMax = {mach_mean}
                 }}
             }}''')
 
-        plot.contour(0).levels.reset_to_nice(num_levels=10)
+        plot.contour(0).legend.position = (70, 85)
 
-        # Export PNG
         out_path = png_dest / f"{file_path.parent.name}.png"
         tp.export.save_png(out_path.as_posix(), res_number, supersample=3)
-        print(f"Saved: {out_path.name}")
+
+        if progress_callback:
+            progress_callback(idx + 1, total, file_path.parent.name)
 
     print("\nExport complete!")
     

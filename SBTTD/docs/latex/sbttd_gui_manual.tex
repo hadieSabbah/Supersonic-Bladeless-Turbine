@@ -1,0 +1,698 @@
+% =============================================================================
+%  SBTTD Mach Post-Processing GUI — User & Developer Manual
+%  Author: Hadie Hesham Sabbah
+%  Last updated: May 2026
+% =============================================================================
+\documentclass[11pt,letterpaper]{article}
+
+% ---- packages ----
+\usepackage[margin=1in]{geometry}
+\usepackage{graphicx}
+\usepackage{xcolor}
+\usepackage{hyperref}
+\usepackage{listings}
+\usepackage{booktabs}
+\usepackage{amsmath,amssymb}
+\usepackage{enumitem}
+\usepackage{fancyhdr}
+\usepackage{titlesec}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage{parskip}
+
+% ---- colours ----
+\definecolor{codebg}{RGB}{245,245,245}
+\definecolor{codeframe}{RGB}{200,200,200}
+\definecolor{keyword}{RGB}{0,100,180}
+\definecolor{string}{RGB}{180,40,40}
+\definecolor{comment}{RGB}{100,140,100}
+\definecolor{sectionblue}{RGB}{30,70,130}
+
+% ---- listings style ----
+\lstset{
+  language=Python,
+  basicstyle=\ttfamily\small,
+  backgroundcolor=\color{codebg},
+  frame=single,
+  rulecolor=\color{codeframe},
+  keywordstyle=\color{keyword}\bfseries,
+  stringstyle=\color{string},
+  commentstyle=\color{comment}\itshape,
+  breaklines=true,
+  tabsize=4,
+  showstringspaces=false,
+  numbers=left,
+  numberstyle=\tiny\color{gray},
+  numbersep=8pt,
+}
+
+% ---- section formatting ----
+\titleformat{\section}{\Large\bfseries\color{sectionblue}}{}{0em}{}
+\titleformat{\subsection}{\large\bfseries\color{sectionblue!80}}{}{0em}{}
+\titleformat{\subsubsection}{\normalsize\bfseries\color{sectionblue!60}}{}{0em}{}
+
+% ---- header / footer ----
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[L]{\small SBTTD GUI Manual}
+\fancyhead[R]{\small\thepage}
+\renewcommand{\headrulewidth}{0.4pt}
+
+% ---- title ----
+\title{%
+  \vspace{-1cm}
+  \textbf{SBTTD Mach Post-Processing GUI}\\[6pt]
+  \large User \& Developer Manual
+}
+\author{Hadie Hesham Sabbah}
+\date{May 2026}
+
+\begin{document}
+\maketitle
+\tableofcontents
+\newpage
+
+% =============================================================================
+\section{Introduction}
+% =============================================================================
+
+The \textbf{SBTTD Mach Post-Processing GUI} provides a graphical interface for
+the entire CFD post-processing pipeline used in the Supersonic Bladeless Turbine
+Theoretical Development (SBTTD) project.  It replaces the need to step through
+individual code cells in \texttt{MachPostProcessCode.py} by organising the
+workflow into discrete, interactive tabs.
+
+The GUI is built with \textbf{customtkinter} (a modern-looking wrapper around
+Tkinter) and embeds \textbf{Matplotlib} figures directly inside the application
+window for interactive plotting.
+
+\subsection{What the GUI Does}
+
+\begin{enumerate}[leftmargin=2em]
+  \item Load raw Tecplot binary files (\texttt{.bin}) or previously saved
+        pickle data.
+  \item Extract wall variables (pressure, shear stress, Mach number, etc.)
+        with configurable spatial masks.
+  \item Compute boundary-layer thickness via Tecplot line extraction.
+  \item Detect flow separation, compute separation lengths, and generate
+        heatmaps.
+  \item Plot any wall variable against streamwise position, filtered by
+        \(h/l\) or Mach number.
+  \item Compute axial force, torque, and power from 2-D pressure integration.
+  \item Run theoretical models (small-perturbation theory, shock-expansion
+        theory) and compare against CFD.
+  \item Export Mach contour images and visualise total-pressure-loss maps.
+\end{enumerate}
+
+% =============================================================================
+\section{Installation \& Dependencies}
+% =============================================================================
+
+\subsection{Python Environment}
+
+The GUI requires Python~3.9 or later.  The recommended setup is a dedicated
+conda or virtualenv environment.
+
+\begin{lstlisting}[language=bash]
+# Create environment (conda example)
+conda create -n sbttd python=3.11 -y
+conda activate sbttd
+
+# Install dependencies
+pip install customtkinter matplotlib numpy scipy xarray pandas
+pip install pygasflow sympy seaborn
+pip install loguru python-dotenv typer
+
+# Tecplot (requires a licence)
+pip install pytecplot
+\end{lstlisting}
+
+\subsection{Required Packages}
+
+\begin{table}[h]
+\centering
+\begin{tabular}{lll}
+\toprule
+\textbf{Package} & \textbf{Purpose} & \textbf{Required?} \\
+\midrule
+customtkinter    & GUI framework                 & Yes \\
+matplotlib       & Plotting                      & Yes \\
+numpy            & Numerical computation         & Yes \\
+scipy            & Interpolation, root finding   & Yes \\
+xarray           & Structured datasets           & Yes \\
+pandas           & DataFrames (force tables)     & Yes \\
+pytecplot        & Tecplot integration           & For Tabs 1, 3, 8 \\
+pygasflow        & Isentropic solvers            & For Tab 7 \\
+sympy            & Symbolic math                 & For Tab 7 \\
+\bottomrule
+\end{tabular}
+\caption{Dependency matrix.}
+\end{table}
+
+\subsection{Launching the GUI}
+
+Navigate to the \texttt{2\_SBTTD Data Analysis Code} directory and run:
+
+\begin{lstlisting}[language=bash]
+python -m gui
+\end{lstlisting}
+
+This invokes \texttt{gui/\_\_main\_\_.py}, which creates the main
+\texttt{SBTTDApp} window and starts the Tkinter event loop.
+
+% =============================================================================
+\section{Architecture Overview}
+% =============================================================================
+
+\subsection{Directory Layout}
+
+\begin{lstlisting}[language=bash,numbers=none]
+2_SBTTD Data Analysis Code/
+|-- gui/
+|   |-- __init__.py
+|   |-- __main__.py          # Entry point
+|   |-- app.py               # Main window (SBTTDApp)
+|   |-- state.py             # Central application state (AppState)
+|   |-- tabs/
+|   |   |-- __init__.py
+|   |   |-- tab_data_io.py       # Tab 1: Data Import / Export
+|   |   |-- tab_variables.py     # Tab 2: Variable Extraction
+|   |   |-- tab_boundary_layer.py# Tab 3: Boundary Layer Analysis
+|   |   |-- tab_separation.py    # Tab 4: Separation Analysis
+|   |   |-- tab_wall_plots.py    # Tab 5: Wall Variable Plots
+|   |   |-- tab_force_power.py   # Tab 6: Force & Power
+|   |   |-- tab_theoretical.py   # Tab 7: Theoretical Models
+|   |   |-- tab_contours.py      # Tab 8: Contour Export
+|   |-- widgets/
+|       |-- __init__.py
+|       |-- plot_canvas.py   # Embedded Matplotlib canvas
+|       |-- dir_browser.py   # Directory/file browser widget
+|-- utils/
+|   |-- dataload_util.py     # bigImport, runLoader, runSaver
+|   |-- parameterComputation.py # variableImporterMasked, ReCompute
+|   |-- models.py            # Shock-expansion, force, separation
+|   |-- plotting.py          # Publication-quality plotting functions
+|   |-- experimental.py      # Experimental data processing
+|   |-- computation.py       # (placeholder)
+|-- MachPostProcessCode.py   # Original script (reference)
+|-- sweep_study_gui.py       # Standalone exp. comparison GUI
+\end{lstlisting}
+
+\subsection{Design Principles}
+
+\begin{itemize}[leftmargin=2em]
+  \item \textbf{Central state object.}  All data lives in a single
+        \texttt{AppState} instance (\texttt{gui/state.py}).  Every tab reads
+        from and writes to this object, eliminating the need to pass data
+        between tabs explicitly.
+
+  \item \textbf{Tab-per-workflow-step.}  Each tab corresponds to one logical
+        step in the post-processing pipeline, matching the cell groups in the
+        original \texttt{MachPostProcessCode.py}.
+
+  \item \textbf{Threaded long operations.}  Data import, variable extraction,
+        and boundary-layer computation run in background threads so the GUI
+        remains responsive.
+
+  \item \textbf{Embedded Matplotlib.}  The \texttt{PlotCanvas} widget wraps
+        \texttt{FigureCanvasTkAgg} with a navigation toolbar, allowing
+        interactive pan/zoom/save directly inside the app.
+\end{itemize}
+
+\subsection{The AppState Class}
+
+\texttt{gui/state.py} defines \texttt{AppState} with the following attribute
+groups:
+
+\begin{table}[h]
+\centering
+\small
+\begin{tabular}{ll}
+\toprule
+\textbf{Group}         & \textbf{Key Attributes} \\
+\midrule
+Raw data               & \texttt{ds\_by\_case}, \texttt{ds\_by\_case\_quad}, \texttt{ds\_by\_case\_inlet} \\
+Wall variables         & \texttt{x}, \texttt{y}, \texttt{P}, \texttt{tau\_x}, \texttt{tau\_y}, \texttt{mach}, \ldots \\
+Quadrant variables     & \texttt{x\_quad}, \texttt{P\_quad}, \texttt{mach\_quad}, \ldots \\
+Inlet variables        & \texttt{P\_inlet}, \texttt{mach\_inlet}, \texttt{u\_inlet} \\
+Computed quantities    & \texttt{tau\_wall}, \texttt{delta\_n\_dict} \\
+Separation results     & \texttt{sep\_length}, \texttt{x\_sep}, \texttt{x\_attach}, \ldots \\
+Force / theory results & \texttt{df\_axial\_force}, \texttt{axialForceScaled}, \ldots \\
+Case metadata          & \texttt{case\_keys}, \texttt{h\_l\_values}, \texttt{mach\_values}, \texttt{cases\_by\_hl} \\
+Status flags           & \texttt{data\_loaded}, \texttt{variables\_extracted}, \texttt{tecplot\_connected} \\
+\bottomrule
+\end{tabular}
+\caption{AppState attribute summary.}
+\end{table}
+
+% =============================================================================
+\section{Tab-by-Tab Usage Guide}
+% =============================================================================
+
+\subsection{Tab 1: Data I/O}
+
+\textbf{Purpose:} Import raw Tecplot files or load previously saved pickle
+data; optionally save the current dataset.
+
+\textbf{Workflow:}
+\begin{enumerate}
+  \item Click \emph{Connect to Tecplot} (required for raw import and BL analysis).
+  \item Either:
+    \begin{itemize}
+      \item Browse to a study root directory and click \emph{Run bigImport}, or
+      \item Browse to a folder containing \texttt{.pkl} files and click
+            \emph{Load Data}.
+    \end{itemize}
+  \item After loading, the status label shows the number of cases found.
+  \item Use \emph{Save Data} to serialise the current datasets to pickle files.
+\end{enumerate}
+
+\textbf{Backend function:} \texttt{utils.dataload\_util.bigImport},
+\texttt{runLoader}, \texttt{runSaver}.
+
+% ----------------------------------------------------------------------------
+\subsection{Tab 2: Variable Extraction}
+
+\textbf{Purpose:} Extract wall variables from \texttt{ds\_by\_case} with an
+optional spatial mask, and compute $\tau_{\text{wall}}$.
+
+\textbf{Parameters:}
+\begin{itemize}
+  \item \texttt{min\_l}, \texttt{max\_l}: streamwise bounds for the mask
+        (set both to 0 to disable masking).
+\end{itemize}
+
+\textbf{Output:} Populates \texttt{state.x}, \texttt{state.P},
+\texttt{state.tau\_x}, etc.
+
+\textbf{Backend function:} \texttt{utils.parameterComputation.variableImporterMasked}.
+
+% ----------------------------------------------------------------------------
+\subsection{Tab 3: Boundary Layer Analysis}
+
+\textbf{Purpose:} Compute BL thickness by extracting line probes normal to the
+wall in Tecplot and detecting the vorticity-gradient edge.
+
+\textbf{Requires:} Tecplot connection, extracted variables.
+
+\textbf{Parameters:}
+\begin{itemize}
+  \item \texttt{Ny}: number of points per probe (default 1000).
+  \item \texttt{BL height}: maximum probe length in mm (default 3).
+  \item \texttt{Stride}: skip every $n$-th wall point (default 1).
+  \item \texttt{Threshold}: normalised vorticity-gradient threshold (default 0.02).
+\end{itemize}
+
+\textbf{Output:} \texttt{state.delta\_n\_dict} — dictionary of BL thickness
+arrays in mm.
+
+% ----------------------------------------------------------------------------
+\subsection{Tab 4: Separation Analysis}
+
+\textbf{Purpose:} Identify separation and reattachment locations from the sign
+of $\tau_{\text{wall}}$, compute total separation length, and generate summary
+plots.
+
+\textbf{Steps:}
+\begin{enumerate}
+  \item Click \emph{Compute Separation} $\rightarrow$ calls
+        \texttt{find\_sepLength}.
+  \item Optionally click \emph{Find Geometry Extrema} to locate wave peaks
+        and troughs.
+  \item Select a plot type and click \emph{Plot}:
+    \begin{itemize}
+      \item \textbf{Separation Heatmap} — binary matrix (sep/no-sep) coloured
+            green/red.
+      \item \textbf{Sep Length vs h/l} — dimensional separation length curves.
+      \item \textbf{Sep Length (non-dim) vs h/l} — $L_{\text{sep}}/L_{\text{domain}}$.
+      \item \textbf{BL \& Separation Contours} — scatter of separation
+            percentage in $(h/l, M)$ space.
+    \end{itemize}
+\end{enumerate}
+
+\textbf{Backend function:} \texttt{utils.models.find\_sepLength},
+\texttt{max\_min\_finder}.
+
+% ----------------------------------------------------------------------------
+\subsection{Tab 5: Wall Variable Plots}
+
+\textbf{Purpose:} Quick plotting of any extracted wall variable ($\tau_w$,
+$y^+$, $P$, $\partial P/\partial x$, Mach, etc.) against $x$.
+
+\textbf{Controls:}
+\begin{itemize}
+  \item \textbf{Variable}: dropdown of available quantities.
+  \item \textbf{Filter by}: \texttt{h\_l} or \texttt{mach} $+$ a numeric
+        value.  Cases matching that parameter are overlaid; the varying
+        parameter is used for legend labels.
+  \item \textbf{Plot}: single-axes plot for the selected filter value.
+  \item \textbf{Subplot All h/l}: one subplot per $h/l$, all Mach curves in
+        each.
+\end{itemize}
+
+% ----------------------------------------------------------------------------
+\subsection{Tab 6: Force \& Power}
+
+\textbf{Purpose:} Integrate wall pressure to obtain axial force, then compute
+torque and power for given rotor parameters.
+
+\textbf{Parameters:}
+\begin{itemize}
+  \item Rotor radius $R$ [m], RPM, span [m].
+\end{itemize}
+
+\textbf{Steps:}
+\begin{enumerate}
+  \item Click \emph{Compute Force (2D)}.
+  \item Click \emph{Compute Power} (uses $P = F \cdot R \cdot \omega$).
+  \item Optionally click \emph{Build Force DataFrame} for a tabular summary.
+  \item Select a plot type and click \emph{Plot}.
+\end{enumerate}
+
+\textbf{Backend:} \texttt{utils.models.compute\_force\_2D},
+\texttt{create\_axial\_force\_dataframe}.
+
+% ----------------------------------------------------------------------------
+\subsection{Tab 7: Theoretical Models (Shock-Expansion)}
+
+\textbf{Purpose:} Run small-perturbation theory and/or shock-expansion theory
+to predict pressure distributions and axial force, and compare to CFD.
+
+\textbf{Models:}
+\begin{itemize}
+  \item \textbf{Small Perturbation}: linearised supersonic thin-airfoil theory.
+  \item \textbf{Shock-Expansion (SE)}: marching oblique-shock / Prandtl-Meyer
+        expansion analysis.
+  \item \textbf{Combined}: hybrid SP $+$ SE model.
+\end{itemize}
+
+\textbf{Plots:}
+\begin{itemize}
+  \item Scaled force ratio $F_{\text{RANS}}/F_{\text{theory}}$ vs $h/l$.
+  \item First-shock pressure vs Mach.
+  \item Pressure distribution overlay.
+\end{itemize}
+
+\textbf{Backend:} \texttt{utils.models.smallPertSolver},
+\texttt{smallPertSolver\_with\_SE}, \texttt{get\_first\_shock\_pressures}.
+
+% ----------------------------------------------------------------------------
+\subsection{Tab 8: Contour Export}
+
+\textbf{Purpose:} Export Mach contour images from Tecplot and visualise
+total-pressure-loss maps.
+
+\textbf{Sections:}
+\begin{itemize}
+  \item \textbf{Mach Contour Export}: provide study directory, PNG output
+        directory, and optional Tecplot layout file; click \emph{Export
+        Contours}.
+  \item \textbf{Total Pressure Loss}: scatter map of pressure loss in
+        $(h/l, M)$ space, computed from quad/inlet data.
+  \item \textbf{Mach Contour Visualisation}: assemble exported PNGs into a
+        subplot grid for a given $h/l$.
+\end{itemize}
+
+\textbf{Backend:} \texttt{utils.plotting.export\_mach\_contours},
+\texttt{plot\_mach\_contours\_per\_hl}.
+
+% =============================================================================
+\section{How to Modify \& Extend the GUI}
+% =============================================================================
+
+\subsection{Adding a New Tab}
+
+\begin{enumerate}
+  \item Create a new file \texttt{gui/tabs/tab\_myfeature.py}.
+  \item Define a class inheriting from \texttt{ctk.CTkFrame}:
+\begin{lstlisting}
+import customtkinter as ctk
+
+class MyFeatureTab(ctk.CTkFrame):
+    def __init__(self, master, state, status_callback=None, **kwargs):
+        super().__init__(master, **kwargs)
+        self.state = state
+        self.status = status_callback or (lambda msg: None)
+        self._build_ui()
+
+    def _build_ui(self):
+        # Create your widgets here
+        ctk.CTkLabel(self, text="My Feature").pack()
+        ctk.CTkButton(self, text="Run", command=self._run).pack()
+
+    def _run(self):
+        # Access shared data via self.state
+        if self.state.x is None:
+            return
+        # ... your logic ...
+        self.status("Done!")
+\end{lstlisting}
+
+  \item Register the tab in \texttt{gui/app.py}:
+\begin{lstlisting}
+from gui.tabs.tab_myfeature import MyFeatureTab
+
+# inside SBTTDApp._build_tabs(), add to tab_specs:
+("9. My Feature", MyFeatureTab),
+\end{lstlisting}
+\end{enumerate}
+
+\subsection{Adding a New State Variable}
+
+Open \texttt{gui/state.py} and add the attribute in
+\texttt{AppState.\_\_init\_\_}:
+
+\begin{lstlisting}
+self.my_new_variable = None
+\end{lstlisting}
+
+All tabs automatically have access via \texttt{self.state.my\_new\_variable}.
+
+\subsection{Adding a New Widget}
+
+Place reusable widgets in \texttt{gui/widgets/}.  The existing
+\texttt{PlotCanvas} and \texttt{DirBrowser} serve as templates:
+
+\begin{itemize}
+  \item Inherit from \texttt{ctk.CTkFrame}.
+  \item Accept \texttt{master} as the first argument.
+  \item Provide getter/setter methods for the widget's value.
+\end{itemize}
+
+\subsection{Adding a New Backend Function}
+
+Place computation logic in the appropriate \texttt{utils/} module:
+
+\begin{itemize}
+  \item \texttt{utils/parameterComputation.py} — variable extraction, Reynolds
+        number.
+  \item \texttt{utils/models.py} — theoretical models, separation, force.
+  \item \texttt{utils/plotting.py} — publication-quality plotting.
+  \item \texttt{utils/dataload\_util.py} — data I/O, Tecplot import.
+  \item \texttt{utils/experimental.py} — experimental data processing.
+\end{itemize}
+
+Then call the function from your tab, preferably inside a
+\texttt{threading.Thread} for long-running operations to keep the GUI
+responsive.
+
+\subsection{Changing the Theme}
+
+The sidebar includes a theme toggle (Dark / Light / System).
+Programmatically, call:
+
+\begin{lstlisting}
+ctk.set_appearance_mode("Dark")   # or "Light", "System"
+ctk.set_default_color_theme("blue")  # or "green", "dark-blue"
+\end{lstlisting}
+
+% =============================================================================
+\section{Backend Utility Reference}
+% =============================================================================
+
+\subsection{\texttt{utils/dataload\_util.py}}
+
+\begin{table}[h]
+\centering
+\small
+\begin{tabular}{lp{8cm}}
+\toprule
+\textbf{Function} & \textbf{Description} \\
+\midrule
+\texttt{bigImport(base\_dir, fileName)} &
+  Recursively load Tecplot \texttt{.bin} files from a study directory.
+  Returns \texttt{(ds\_by\_case, ds\_by\_case\_quad, ds\_by\_case\_inlet)}.\\
+\texttt{runSaver(ds, ds\_quad, ds\_inlet)} &
+  Pickle the three dictionaries to a date-stamped folder.\\
+\texttt{runLoader(load\_dir\_dic)} &
+  Load the latest dated pickle folder. Returns the three dictionaries.\\
+\texttt{file\_pathFinder(fileName, rootDir)} &
+  Locate all instances of \texttt{fileName} under \texttt{rootDir}.\\
+\texttt{load\_minfo\_step\_force(path, use)} &
+  Parse mcfd info files for convergence data.\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{\texttt{utils/parameterComputation.py}}
+
+\begin{table}[h]
+\centering
+\small
+\begin{tabular}{lp{8cm}}
+\toprule
+\textbf{Function} & \textbf{Description} \\
+\midrule
+\texttt{variableImporterMasked(ds, min\_l, max\_l, mask\_input)} &
+  Extract 18 wall variables from \texttt{ds\_by\_case}, optionally masked to
+  $[\texttt{min\_l}, \texttt{max\_l}]$.\\
+\texttt{ReCompute(T, U, rho, \ldots)} &
+  Compute Reynolds number per case using Sutherland viscosity.\\
+\texttt{yplusThreshold(y\_plus)} &
+  Warn if any case exceeds $y^+ > 1$.\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{\texttt{utils/models.py} (selected)}
+
+\begin{table}[h]
+\centering
+\small
+\begin{tabular}{lp{8cm}}
+\toprule
+\textbf{Function} & \textbf{Description} \\
+\midrule
+\texttt{find\_sepLength(ds, x, tau\_wall)} &
+  Detect separation/reattachment from $\tau_w$ sign changes; returns
+  lengths, locations.\\
+\texttt{compute\_force\_2D(x, y, P, span)} &
+  Integrate pressure to get axial force per unit span.\\
+\texttt{smallPertSolver(\ldots)} &
+  Small-perturbation theory for supersonic wavy walls.\\
+\texttt{get\_first\_shock\_pressures(\ldots)} &
+  Shock-expansion analysis returning the pressure at the first shock.\\
+\texttt{max\_min\_finder(ds, x, y)} &
+  Locate geometry maxima and minima (wave peaks/troughs).\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{\texttt{utils/plotting.py} (selected)}
+
+\begin{table}[h]
+\centering
+\small
+\begin{tabular}{lp{8cm}}
+\toprule
+\textbf{Function} & \textbf{Description} \\
+\midrule
+\texttt{plotter(x, y, \ldots)} &
+  Single-curve publication plot.\\
+\texttt{plotter\_multiPerCase(\ldots)} &
+  Multi-curve plot filtered by $h/l$ or Mach.\\
+\texttt{subplotter\_multiPerCase(\ldots)} &
+  Subplot grid, one per filter value.\\
+\texttt{plot\_BL\_thickness(\ldots)} &
+  BL thickness curves, one figure per $h/l$.\\
+\texttt{export\_mach\_contours(\ldots)} &
+  Batch-export Mach contour images from Tecplot.\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+% =============================================================================
+\section{Typical Workflow}
+% =============================================================================
+
+A recommended session follows these steps:
+
+\begin{enumerate}
+  \item \textbf{Tab 1} — Connect to Tecplot (if needed); load data via
+        \emph{bigImport} or \emph{Load Data}.
+  \item \textbf{Tab 2} — Set \texttt{min\_l = 0}, \texttt{max\_l = 0.1};
+        click \emph{Extract Variables}, then \emph{Compute tau\_wall}.
+  \item \textbf{Tab 3} — Set BL parameters; click \emph{Compute BL Thickness}
+        (requires Tecplot); plot results.
+  \item \textbf{Tab 4} — Click \emph{Compute Separation}; view heatmap and
+        length plots.
+  \item \textbf{Tab 5} — Browse wall variables ($\tau_w$, $y^+$, $P$, etc.)
+        interactively.
+  \item \textbf{Tab 6} — Compute axial force and power.
+  \item \textbf{Tab 7} — Run small-perturbation or SE model; compare to CFD.
+  \item \textbf{Tab 8} — Export contours; view pressure-loss maps.
+\end{enumerate}
+
+% =============================================================================
+\section{Troubleshooting}
+% =============================================================================
+
+\begin{description}[leftmargin=2em]
+  \item[``Tecplot connection failed'']
+    Ensure Tecplot 360 is running and PyTecplot is installed.  The GUI calls
+    \texttt{tp.session.connect()}, which requires the Tecplot TecUtil server.
+
+  \item[GUI freezes during long computation]
+    All heavy functions run in daemon threads.  If the GUI appears
+    unresponsive, wait for the status bar to update.  Do not close the window
+    during computation.
+
+  \item[ModuleNotFoundError for \texttt{customtkinter}]
+    Run \texttt{pip install customtkinter}.
+
+  \item[Plots appear blank]
+    Make sure data is loaded (Tab~1) and variables are extracted (Tab~2)
+    before attempting to plot in later tabs.
+
+  \item[``No cases match h\_l = \ldots'']
+    Case keys follow the pattern \texttt{h\_l\_0.04\_Mach\_2.0}.  Ensure
+    the filter value matches the numeric format in your dataset.
+\end{description}
+
+% =============================================================================
+\section{Appendix: Key Equations}
+% =============================================================================
+
+\subsection{Wall Shear Stress}
+
+The tangential wall shear stress is computed from the Cartesian components:
+\begin{equation}
+  \tau_w = \tau_x \, t_x + \tau_y \, t_y
+\end{equation}
+where $\mathbf{t} = (t_x, t_y) = (\mathrm{d}x/\mathrm{d}s,\;
+\mathrm{d}y/\mathrm{d}s)$ is the unit tangent vector along the wall.
+
+\subsection{Boundary Layer Edge Detection}
+
+The BL edge is located where the normalised vorticity gradient drops below a
+threshold $\epsilon$:
+\begin{equation}
+  \frac{|\partial \omega_z / \partial n|}{|\partial \omega_z / \partial n|_{\max}}
+  < \epsilon, \quad \epsilon = 0.02 \text{ (default)}
+\end{equation}
+
+\subsection{Separation Length}
+
+Separation is detected where $\tau_w < 0$.  The total separation length is:
+\begin{equation}
+  L_{\text{sep}} = \sum_{i} (x_{\text{attach},i} - x_{\text{sep},i})
+\end{equation}
+The non-dimensional form is $L_{\text{sep}} / L_{\text{domain}}$.
+
+\subsection{Axial Force (2-D Pressure Integration)}
+
+\begin{equation}
+  F_{\text{axial}} = -\int_0^L p(x) \frac{\mathrm{d}y}{\mathrm{d}x}\,\mathrm{d}x
+  \;\times\; b
+\end{equation}
+where $b$ is the rotor span (out-of-plane depth).
+
+\subsection{Prandtl--Meyer Function}
+
+\begin{equation}
+  \nu(M) = \sqrt{\frac{\gamma+1}{\gamma-1}}\;
+  \arctan\!\sqrt{\frac{\gamma-1}{\gamma+1}(M^2-1)}
+  \;-\; \arctan\!\sqrt{M^2-1}
+\end{equation}
+
+\end{document}
