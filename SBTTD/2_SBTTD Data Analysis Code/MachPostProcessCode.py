@@ -27,7 +27,7 @@ from utils.parameterComputation import variableImporterMasked, ReCompute, yplusT
 from utils.dataload_util import assign_dir, bigImport, runSaver, runLoader, file_pathFinder, load_minfo_step_force, Import_choice_3D
 from utils.plotting import plotter, plotter_multi_all, plotter_multiPerCase, subplotter, plot_scaled_axialForce_vs_hl,plot_BL_thickness,plot_BL_location_tecplot,plot_BL_thickness_subplots, plot_mach_contours_per_hl, plot_viscous_vs_inviscid_contours, subplotter_multiPerCase, load_mcfd_info1 , load_mcfd_net_mass_flux, export_mach_contours,  plot_BL_and_separation_contours, plot_dpdx_before_sep_contour, plot_dpdx_before_sep_3D, plot_total_pressure_loss, plot_total_pressure_loss_3D, plot_power_vs_pressure_loss, plot_power_vs_pressure_loss_3D, plot_theta_max_occurrence, plot_mach_wave_coalescence_SE    
 from utils.models import analyze_geometries, get_first_shock_pressures, offsetGeomPoints, smallPertSolver, find_sepLength, max_min_finder,mach_vs_sepLength, smallPertSolver_with_SE, smallPertSolver_combined, compute_power_2D , compute_force_2D , compute_torque_2D_norm , load_csv_data, load_tecplot_data, generate_torque_table_mach , compute_torque_2D_norm, generate_axial_force_plot_mach, generate_axial_force_plot_dual_mach, create_axial_force_dataframe, smallPertSolver_sepAware, SE_model,SE_first_shock, SE_axial_force_comparison,SE_first_shock_single
-from utils.experimental import set_publication_style, process_exp_case, plot_exp_errorbar, compare_exp_to_cfd
+from utils.experimental import set_publication_style, process_exp_case, plot_exp_errorbar, compare_exp_to_cfd, compare_experiments
 
 
 #%%
@@ -69,7 +69,7 @@ runSaver(ds_by_case, ds_by_case_quad, ds_by_case_inlet)
 
 """
 
-
+ds_by_quad = ds_by_case_quad
 # Defining Variables # 
 min_l = 0 
 max_l = 0.1
@@ -3289,21 +3289,42 @@ plt.grid()
 set_publication_style()
 
 # ── Flat plate: raw data is in bar, you want everything in kPa ──
-flat = process_exp_case(
-    csv_path=r"C:\Users\hhsabbah\Documents\01_Bladeless_Proj\22_Codes\2_Experimental code\1_Experimental Data\3_Flat Plate\1_Pressure Tabs\Scan.csv",
+flat_noSidewalls = process_exp_case(
+    csv_path=r"C:\Users\hhsabbah\Documents\01_Bladeless_Proj\22_MATLAB Codes\2_Experimental code\1_Experimental Data\3_Flat Plate\1_Pressure Tabs\Test1.csv",
     tap_spacing_mm=7.25,
     skip_channels=3,
     pressure_scale=1e5,        # raw bar → Pa
     pressure_offset=101325,    # gauge → absolute (in Pa)
     exp_native_unit='Pa',      # after scale+offset we're in Pa
-    pressure_unit='kPa',       # output in kPa
+    pressure_unit='Pa',       # output in kPa
+)
+
+
+flat_SideWalls = process_exp_case(
+    csv_path=r"C:\Users\hhsabbah\Documents\01_Bladeless_Proj\22_MATLAB Codes\2_Experimental code\1_Experimental Data\3_Flat Plate\1_Pressure Tabs\Test2.csv",
+    tap_spacing_mm=7.25,
+    skip_channels=3,
+    pressure_scale=1e5,        # raw bar → Pa
+    pressure_offset=101325,    # gauge → absolute (in Pa)
+    exp_native_unit='Pa',      # after scale+offset we're in Pa
+    pressure_unit='Pa',       # output in kPa
 )
 
 
 # Plotting the experimental error bars # 
-plot_exp_errorbar(flat, title="Flat Plate")  # ylabel auto = "Pressure [kPa]"
+plot_exp_errorbar(flat_noSidewalls, title="Flat Plate")  
+#%%
 
 
+# Compare the flat plate no side walls with the flat plate with side walls #
+  # With normalization for experiments at different scales/spacings:
+compare_experiments(
+    [flat_noSidewalls, flat_SideWalls],
+    labels=["No Sidewalls", "With Sidewalls"],
+    title="Flat Plate Comparison",
+    normalize=True,           # P / P0
+    normalize_x=True,         # X / L
+)
 
 #%%
 #  h/l=0.02 angled: raw data is in atm; change to bar ###

@@ -309,6 +309,9 @@ def process_exp_case(csv_path, tap_spacing_mm, skip_channels=0,
         'errors'        : np.array of 95% CI values in pressure_unit
         'x_exp_mm'      : tap locations in mm
         'pressure_unit' : str, the unit of means/errors/P_converted
+        'P0'            : float, total (stagnation) pressure from the
+                          highest-mean skipped channel, in pressure_unit.
+                          None if skip_channels == 0.
     """
     clean_data = exp_cleaner(csv_path)
 
@@ -331,7 +334,8 @@ def process_exp_case(csv_path, tap_spacing_mm, skip_channels=0,
         exp_plotter(t_elapsed, clean_data['T'], "Temperature", "T", "C")
 
     p_stats = exp_stats_pressure(clean_data)
-    channels = sorted(p_stats.keys())[skip_channels:]
+    all_channels = sorted(p_stats.keys())
+    channels = all_channels[skip_channels:]
 
     means_native = np.array([
         p_stats[ch]['mean'] * pressure_scale + pressure_offset for ch in channels
@@ -348,6 +352,14 @@ def process_exp_case(csv_path, tap_spacing_mm, skip_channels=0,
 
     x_exp_mm = tap_spacing_mm * np.arange(len(channels))
 
+    P0 = None
+    if skip_channels > 0:
+        stag_channels = all_channels[:skip_channels]
+        stag_ch = max(stag_channels, key=lambda ch: p_stats[ch]['mean'])
+        P0_native = p_stats[stag_ch]['mean'] * pressure_scale + pressure_offset
+        P0_pa = P0_native * native_to_pa
+        P0 = _convert_pressure(P0_pa, pressure_unit)
+
     return {
         'clean_data': clean_data,
         't_elapsed': t_elapsed,
@@ -359,6 +371,7 @@ def process_exp_case(csv_path, tap_spacing_mm, skip_channels=0,
         'errors': errors,
         'x_exp_mm': x_exp_mm,
         'pressure_unit': pressure_unit,
+        'P0': P0,
     }
 
 
@@ -392,6 +405,131 @@ def plot_exp_errorbar(exp_result, title="Experimental Wall Pressure",
     if show:
         plt.show()
     return fig, ax
+
+
+_COMPARE_MARKERS = ['o', 's', '^', 'D', 'v', 'P', 'X', 'h', '<', '>']
+_COMPARE_COLORS = [
+    '#1f77b4', '#d62728', '#2ca02c', '#ff7f0e',
+    '#9467bd', '#8c564b', '#e377c2', '#7f7f7f',
+    '#bcbd22', '#17becf',
+]
+
+
+def compare_experiments(exp_results, labels=None,
+                        title="Experimental Comparison",
+                        xlabel=None, ylabel=None,
+                        pressure_unit=None, normalize=False,
+                        normalize_x=False, show=True):
+    """Overlay multiple experimental results on the same axes for comparison.
+
+    Parameters
+    ----------
+    exp_results : list of dict
+        Each element is an output from process_exp_case().
+    labels : list of str or None
+        Legend label for each experiment. If None, auto-generates as
+        "Experiment 1", "Experiment 2", etc.
+    title : str
+        Plot title.
+    xlabel : str or None
+        X-axis label. Auto-generates based on normalize_x if None.
+    ylabel : str or None
+        Y-axis label. Auto-generates from pressure_unit if None.
+    pressure_unit : str or None
+        Desired output unit for the plot. If None, uses the unit from
+        the first experiment. All datasets are converted to this unit.
+    normalize : bool
+        If True, normalize each dataset's pressure by its upstream total
+        pressure (P0) from the stagnation port. Requires that each
+        experiment was processed with skip_channels > 0 so that P0 is
+        available.
+    normalize_x : bool
+        If True, normalize each dataset's x-positions to [0, 1] by
+        dividing by its total tap length.
+    show : bool
+        Whether to call plt.show().
+
+    Returns
+    -------
+    dict with keys:
+        'fig', 'ax'        : matplotlib objects
+        'datasets'         : list of dicts, one per experiment, each with
+                             'x', 'means', 'errors', 'label', 'P0'
+        'pressure_unit'    : the common unit used
+    """
+    if not exp_results:
+        raise ValueError("exp_results must contain at least one experiment.")
+
+    if pressure_unit is None:
+        pressure_unit = exp_results[0].get('pressure_unit', 'Pa')
+
+    n = len(exp_results)
+    if labels is None:
+        labels = [f"Experiment {i + 1}" for i in range(n)]
+    if len(labels) != n:
+        raise ValueError(f"labels length ({len(labels)}) must match "
+                         f"exp_results length ({n}).")
+
+    fig, ax = plt.subplots()
+    datasets = []
+
+    for i, (exp, label) in enumerate(zip(exp_results, labels)):
+        marker = _COMPARE_MARKERS[i % len(_COMPARE_MARKERS)]
+        color = _COMPARE_COLORS[i % len(_COMPARE_COLORS)]
+
+        exp_unit = exp.get('pressure_unit', 'Pa')
+        if exp_unit != pressure_unit:
+            exp_to_pa = 1.0 / PRESSURE_UNIT_FROM_PA[exp_unit]
+            means = _convert_pressure(exp['means'] * exp_to_pa, pressure_unit)
+            errors = _convert_pressure(exp['errors'] * exp_to_pa, pressure_unit)
+        else:
+            means = exp['means'].copy()
+            errors = exp['errors'].copy()
+
+        x = exp['x_exp_mm'].copy()
+        if normalize_x:
+            x_range = x[-1] - x[0]
+            if x_range > 0:
+                x = (x - x[0]) / x_range
+
+        P0 = exp.get('P0')
+        if normalize:
+            if P0 is None:
+                raise ValueError(
+                    f"Cannot normalize '{label}': P0 is not available. "
+                    f"Ensure process_exp_case was called with skip_channels > 0.")
+            if exp_unit != pressure_unit:
+                exp_to_pa = 1.0 / PRESSURE_UNIT_FROM_PA[exp_unit]
+                P0 = _convert_pressure(P0 * exp_to_pa, pressure_unit)
+            errors = errors / P0
+            means = means / P0
+
+        ax.errorbar(x, means, yerr=errors, fmt=marker, capsize=4,
+                    color=color, label=label, markersize=6)
+
+        datasets.append({'x': x, 'means': means, 'errors': errors,
+                         'label': label, 'P0': P0})
+
+    if xlabel is None:
+        xlabel = "X/L [-]" if normalize_x else "X [mm]"
+    if ylabel is None:
+        p_label = PRESSURE_UNIT_LABELS.get(pressure_unit, pressure_unit)
+        ylabel = r"$P / P_0$ [-]" if normalize else f"Pressure [{p_label}]"
+
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel(ylabel)
+    ax.set_title(title)
+    ax.ticklabel_format(useOffset=False, style='plain')
+    ax.legend()
+    plt.tight_layout()
+    if show:
+        plt.show()
+
+    return {
+        'fig': fig, 'ax': ax,
+        'datasets': datasets,
+        'pressure_unit': pressure_unit,
+    }
 
 
 def compare_exp_to_cfd(exp_result, cfd_path, x_min_cfd, x_max_cfd,

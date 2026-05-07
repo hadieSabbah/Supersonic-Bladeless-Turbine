@@ -1878,7 +1878,7 @@ def export_mach_contours(
 
         plot.view.fit()
 
-        mach_min = min(zone.values(mach_var).min() for zone in dataset.zones())
+        mach_min = np.round(min(zone.values(mach_var).min() for zone in dataset.zones()), decimals=1)
         mach_max = max(zone.values(mach_var).max() for zone in dataset.zones())
 
         inlet_zone = next(
